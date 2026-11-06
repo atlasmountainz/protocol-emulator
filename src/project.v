@@ -34,7 +34,7 @@ module tt_um_atlasmountainz_protocol_emulator (
     end
   end
 
-  wire [6:0]  rom_addr;
+  wire [7:0]  rom_addr;
   wire [15:0] rom_data;
   wire [7:0]  od_pull;
 

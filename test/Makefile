@@ -6,13 +6,15 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v cpu.v rom.v
+PROJECT_SOURCES = project.v cpu.v
+# The firmware ROM; random_run.py swaps in a simulation-only ROM for differential tests.
+ROM_SRC ?= $(SRC_DIR)/rom.v
 
 ifneq ($(GATES),yes)
 
 # RTL simulation:
-SIM_BUILD				= sim_build/rtl
-VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES))
+SIM_BUILD				?= sim_build/rtl
+VERILOG_SOURCES += $(addprefix $(SRC_DIR)/,$(PROJECT_SOURCES)) $(ROM_SRC)
 
 else
 

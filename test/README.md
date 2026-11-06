@@ -45,3 +45,12 @@ Using Surfer
 ```sh
 surfer tb.fst
 ```
+
+## This project's tests
+
+- `make` runs the directed cocotb tests in `test.py` (UART, SPI, I2C). CI runs the same thing.
+- `python3 random_run.py [NUM_SEEDS] [FIRST_SEED]` runs the random differential test: each seed makes a
+  random program and random pin inputs, runs them on the RTL and on `isa_model.py` (an independent
+  Python model written from `docs/isa.md`), and compares every architectural register on every clock
+  edge. It fails if any seed diverges or if any instruction or branch outcome was never exercised.
+  `rom_random.v` is a simulation-only ROM that loads the random program from a hex file.

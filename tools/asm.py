@@ -8,16 +8,16 @@ Numbers are decimal or 0x-hex. See docs/isa.md for the instruction set.
 """
 import sys
 
-ROM_DEPTH = 128  # 7-bit program counter
+ROM_DEPTH = 256  # 8-bit program counter
 
 # mnemonic -> (opcode, operand names)
 OPS = {
-    "NOP":  (0x0, []),
+    "NOP":  (0xF, []),                      # extended family, sub-opcode 4
     "PIN":  (0x1, ["pin", "val"]),          # drive one output pin
     "OUT":  (0x2, ["imm8"]),                # drive all 8 output pins
     "WAIT": (0x3, ["n"]),                   # take 1+n cycles in total
     "JMP":  (0x4, ["addr"]),
-    "JPIN": (0x5, ["pin", "val", "addr"]),  # jump if input pin == val
+    "JPIN": (0x5, ["pin", "val", "addr"]),  # jump if input pin == val (val=0 uses opcode 0x0)
     "LDA":  (0x6, ["imm8"]),
     "SHR":  (0x7, []),                      # C = A[0]; A >>= 1
     "OUTC": (0x8, ["pin"]),                 # output pin = C
@@ -66,7 +66,9 @@ def encode(mn, args, labels, lineno):
         w |= v["addr"]
     elif mn == "JPIN":
         rng("pin", 15); rng("val", 1); rng("addr", ROM_DEPTH - 1)
-        w |= (v["val"] << 11) | (v["pin"] << 7) | v["addr"]
+        a = v["addr"]
+        # opcode carries the pin state; address = {bit 11, bits 6:0}
+        w = ((0x5 if v["val"] else 0x0) << 12) | ((a >> 7) << 11) | (v["pin"] << 7) | (a & 0x7F)
     elif mn == "OUTC":
         rng("pin", 7)
         w |= v["pin"] << 8
@@ -76,6 +78,8 @@ def encode(mn, args, labels, lineno):
     elif mn == "CALL":
         rng("addr", ROM_DEPTH - 1)
         w |= v["addr"]
+    elif mn == "NOP":
+        w |= 0x4 << 8
     elif mn == "RET":
         w |= 0x1 << 8
     elif mn == "ODRV":
@@ -117,14 +121,14 @@ def emit_verilog(words, src):
         "`default_nettype none",
         "",
         "module rom (",
-        "    input  wire [6:0]  addr,",
+        "    input  wire [7:0]  addr,",
         "    output reg  [15:0] data",
         ");",
         "  always @* begin",
         "    case (addr)",
     ]
     for i, w in enumerate(words):
-        out.append(f"      7'd{i}: data = 16'h{w:04X};")
+        out.append(f"      8'd{i}: data = 16'h{w:04X};")
     out += [
         "      default: data = 16'hF000;  // HALT",
         "    endcase",
