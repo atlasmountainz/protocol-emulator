@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "Protocol emulator (UART TX milestone)"      # Project title
+  title:        "Protocol emulator CPU (UART firmware)"      # Project title
   author:       "atlasmountainz"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Programmable protocol emulator ASIC - first milestone: UART transmitter"      # One line description of what your project does
+  description:  "Programmable protocol emulator ASIC - tiny cycle-exact CPU running a UART TX program from ROM"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
 
@@ -18,7 +18,8 @@ project:
   # Don't forget to also update `PROJECT_SOURCES` in test/Makefile.
   source_files:
     - "project.v"
-    - "uart_tx.v"
+    - "cpu.v"
+    - "rom.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).

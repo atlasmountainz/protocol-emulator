@@ -18,14 +18,14 @@ async def reset(dut):
 
 
 async def send_and_capture(dut, byte):
-    """Pulse start with `byte` on ui_in, then sample the TX line mid-bit."""
+    """Hold start with `byte` on ui_in, then sample the TX line mid-bit."""
     dut.ui_in.value = byte
-    dut.uio_in.value = 1  # start pin high
-    await ClockCycles(dut.clk, 1)
+    dut.uio_in.value = 1  # start pin high (level-triggered; firmware polls it)
+    await ClockCycles(dut.clk, 8)
     dut.uio_in.value = 0
 
-    # TX goes low (start bit) within a couple of clocks
-    for _ in range(5):
+    # TX goes low (start bit) once the firmware has seen start
+    for _ in range(40):
         await RisingEdge(dut.clk)
         if int(dut.uo_out.value) & 1 == 0:
             break
@@ -76,3 +76,31 @@ async def test_send_bytes(dut):
         else:
             raise AssertionError("busy never cleared after the stop bit")
         assert int(dut.uo_out.value) & 1 == 1, "TX must return to idle high"
+
+
+@cocotb.test()
+async def test_cycle_exact_timing(dut):
+    """The CPU must hit the baud rate exactly: 0x55 makes TX toggle every bit time."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut)
+
+    dut.ui_in.value = 0x55
+    dut.uio_in.value = 1
+    await ClockCycles(dut.clk, 8)
+    dut.uio_in.value = 0
+
+    # Record the clock cycle of every TX transition across the whole frame
+    prev = int(dut.uo_out.value) & 1
+    edges = []
+    for cycle in range(10 * CLKS_PER_BIT + 100):
+        await RisingEdge(dut.clk)
+        cur = int(dut.uo_out.value) & 1
+        if cur != prev:
+            edges.append(cycle)
+            prev = cur
+
+    # start(0), 1,0,1,0,1,0,1,0 (0x55 LSB first), stop(1): 9 transitions
+    assert len(edges) == 9, f"expected 9 TX transitions, got {len(edges)}"
+    gaps = [b - a for a, b in zip(edges, edges[1:])]
+    dut._log.info(f"transition gaps: {gaps}")
+    assert all(g == CLKS_PER_BIT for g in gaps), f"bit times not exactly {CLKS_PER_BIT}: {gaps}"
