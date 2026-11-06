@@ -13,8 +13,12 @@ from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
 from isa_model import Model, STATE_NAMES
+from loader import load_program, LOAD, STROBE, RAM_WORDS
 
 CYCLES = int(os.environ.get("RAND_CYCLES", "6000"))
+# LOAD_RAM=1: send the first 128 words over the pins into the program memory and run from there
+# (words 128-255 read as HALT). Otherwise the program is in the simulation-only ROM.
+LOAD_RAM = os.environ.get("LOAD_RAM") == "1"
 
 
 def load_hex(path):
@@ -25,6 +29,8 @@ def load_hex(path):
 async def test_random_program(dut):
     seed = int(os.environ["PROG_SEED"])
     rom = load_hex(os.environ["PROG_HEX"])
+    if LOAD_RAM:
+        rom = rom[:RAM_WORDS]
     model = Model(rom)
     rng = random.Random(seed ^ 0x5EED)
 
@@ -38,16 +44,36 @@ async def test_random_program(dut):
     dut.uio_in.value = 0
     for _ in range(4):
         await RisingEdge(dut.clk)
-    model.reset()
-    dut.rst_n.value = 1
 
     # Pins change with different "stickiness" per run so both busy loops and fast exits occur
     hold = rng.choice([1, 1, 2, 5, 20])
     ui = uio = 0
+    # In RAM mode uio[5] (LOAD) must stay low while the program runs, or it would hold the CPU
+    # in reset; uio[4] (STROBE) is ignored then and is left random.
+    uio_mask = 0xDF if LOAD_RAM else 0xFF
+
+    if LOAD_RAM:
+        dut.rst_n.value = 1
+        await load_program(dut, rom + [0xF000] * (RAM_WORDS - len(rom)), rng)
+        # Release LOAD with the first stimulus pins p0, then p1. The CPU leaves reset when LOAD
+        # has gone through the 2-flop synchroniser, i.e. its first live edge sees p0 on sync2.
+        p0 = (rng.getrandbits(8), rng.getrandbits(8) & uio_mask)
+        p1 = (rng.getrandbits(8), rng.getrandbits(8) & uio_mask)
+        dut.ui_in.value, dut.uio_in.value = p0
+        await RisingEdge(dut.clk)
+        dut.ui_in.value, dut.uio_in.value = p1
+        await RisingEdge(dut.clk)
+        model.reset()
+        model.sync2 = (p0[1] << 8) | p0[0]
+        model.sync1 = (p1[1] << 8) | p1[0]
+    else:
+        model.reset()
+        dut.rst_n.value = 1
+
     mismatches = 0
     for cyc in range(CYCLES):
         if cyc % hold == 0:
-            ui, uio = rng.getrandbits(8), rng.getrandbits(8)
+            ui, uio = rng.getrandbits(8), rng.getrandbits(8) & uio_mask
         dut.ui_in.value = ui
         dut.uio_in.value = uio
         await RisingEdge(dut.clk)
