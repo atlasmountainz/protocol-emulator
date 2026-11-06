@@ -460,9 +460,9 @@ async def test_i2c_clock_stretching(dut):
 
 # ---- Loadable program memory ---------------------------------------------------------------
 
-async def release_load(dut, uio=0):
+async def release_load(dut, uio=0, ui=0):
     """Lower LOAD (the CPU starts at address 0 of the loaded program)."""
-    dut.ui_in.value = 0
+    dut.ui_in.value = ui
     dut.uio_in.value = uio
     await ClockCycles(dut.clk, 6)
 
@@ -567,3 +567,34 @@ async def test_partial_load_then_reload(dut):
     await release_load(dut)
     await ClockCycles(dut.clk, 20)
     assert int(dut.uo_out.value) == 0xC3
+
+
+EXAMPLES = str(Path(__file__).resolve().parent.parent / "firmware" / "examples")
+
+
+async def uart_send_frame(dut, byte, bit_clks, pin=0):
+    """Drive an 8N1 frame onto ui_in[pin] with `bit_clks` clocks per bit (LSB first)."""
+    bits = [0] + [(byte >> i) & 1 for i in range(8)] + [1]
+    for b in bits:
+        dut.ui_in.value = b << pin
+        await ClockCycles(dut.clk, bit_clks)
+
+
+@cocotb.test()
+async def test_example_uart_receiver(dut):
+    """New protocol, no new silicon: a UART receiver loaded into the program memory. Also checks
+    that it tolerates a +-3% baud-rate error, as a real receiver must."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut)
+    await load_program(dut, build_image([EXAMPLES + "/uart_rx.asm"]))
+    await release_load(dut, ui=1)            # RX idles high
+    await ClockCycles(dut.clk, 20)
+    assert (int(dut.uio_oe.value) >> 7) & 1 == 0, "RX_VALID must be released before any byte"
+
+    for bit_clks, byte in [(434, 0x55), (434, 0xA3), (434, 0x00), (434, 0xFF), (434, 0x3C),
+                           (421, 0x96), (447, 0xC5), (421, 0x01), (447, 0x80)]:
+        await uart_send_frame(dut, byte, bit_clks)
+        await ClockCycles(dut.clk, bit_clks)  # stop bit (ui is still 1)
+        assert int(dut.uo_out.value) == byte, f"got {int(dut.uo_out.value):#04x}, sent {byte:#04x}"
+        assert (int(dut.uio_oe.value) >> 7) & 1 == 1, "RX_VALID must be asserted after a byte"
+        await ClockCycles(dut.clk, bit_clks)  # idle between frames
