@@ -104,8 +104,8 @@ docs/           info.md (datasheet), isa.md (instruction set)
 
 ## About the development
 
-This project was developed with substantial help from an AI assistant (Claude, by Anthropic), which
-wrote most of the RTL, firmware, assembler and tests under the author's direction. Everything here is
+This project was developed with some help from an AI assistant (Claude, by Anthropic), which
+helped with some of the RTL, firmware, assembler, and tests under the author's direction. Everything here is
 open source (Apache-2.0).
 
 <!-- TODO(author): add your own notes here: why you chose this design, what you learned. -->
