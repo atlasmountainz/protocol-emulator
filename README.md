@@ -98,8 +98,8 @@ docs/           info.md (datasheet), isa.md (instruction set)
 
 - Working today: UART TX, SPI master, I2C master, all verified in simulation; layout builds.
 - Not done yet: a program memory that can be loaded after fabrication (today the firmware is in ROM),
-  receive-side UART, and more protocols (JTAG, SWD, PS/2, CAN, low-speed USB, 10BASE-T).
-- The core is only about 1% of the allowed area, so the obvious next step is a writable program
+  receive-side UART, and more protocols (JTAG, SWD, PS/2, CAN, low-speed USB, 10BASE-T). 
+- The core is only about 1% of the allowed area, so the next step is to have pretty much a writable program
   memory plus several cores sharing the pins.
 
 ## About the development
