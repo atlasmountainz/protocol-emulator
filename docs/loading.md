@@ -53,3 +53,10 @@ python3 tools/load_image.py build/image firmware/main.asm firmware/uart_tx.asm
 
 The testbench side of this protocol is `test/loader.py`. The whole directed test suite also runs with the
 firmware loaded this way (`cd test && FROM_RAM=1 make`) and gives identical results to the ROM.
+
+## Example: a protocol the chip was not built with
+
+`firmware/examples/uart_rx.asm` is a UART receiver (8N1, 115200 baud at 50 MHz). It is not in the ROM: the
+testbench loads it into the program memory and receives bytes with it, including at +-3% baud-rate error.
+RX is `ui[0]`; the received byte appears on `uo[7:0]`, and `uio[7]` (open-drain) is pulled low while a byte
+is valid.
