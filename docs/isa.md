@@ -32,4 +32,4 @@ Notes:
 - Unused ROM addresses read as `HALT`.
 - Programs are written in assembly (`firmware/*.asm`) and turned into `src/rom.v` by
   `tools/build_rom.sh`, which assembles `firmware/main.asm` (boot dispatcher), `uart_tx.asm` and
-  `spi_master.asm` into one ROM. Labels are global across files..
+  `spi_master.asm` into one ROM. Labels are global across files.
