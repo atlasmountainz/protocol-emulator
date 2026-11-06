@@ -545,3 +545,25 @@ async def test_reset_returns_to_rom(dut):
     assert int(dut.uo_out.value) == 0x01, "ROM firmware (UART idle) must run again"
     got = await send_and_capture(dut, 0x3C)
     assert got == 0x3C
+
+
+@cocotb.test()
+async def test_partial_load_then_reload(dut):
+    """An aborted load (not a whole image) must not shift the next load: LOAD restarts at byte 0."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut)
+    junk = assemble_words("OUT 0x11\nHALT")
+    await load_program(dut, junk[:1] + [0xF000] * 0)      # one word...
+    # ...plus one stray byte, so the pointer is left odd
+    dut.ui_in.value = 0x77
+    await ClockCycles(dut.clk, 3)
+    dut.uio_in.value = 0x30   # LOAD | STROBE
+    await ClockCycles(dut.clk, 3)
+    dut.uio_in.value = 0x20
+    await ClockCycles(dut.clk, 3)
+    await release_load(dut)
+
+    await load_program(dut, assemble_words("OUT 0x5A\nOUT 0xC3\nHALT"))
+    await release_load(dut)
+    await ClockCycles(dut.clk, 20)
+    assert int(dut.uo_out.value) == 0xC3
