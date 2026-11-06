@@ -78,7 +78,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   pmem u_pmem (
       .clk  (clk),
       .we   (ram_we),
-      .waddr(ld_ptr[7:1]),
+      .waddr(ld_ptr[6:1]),
       .wdata({ld_byte, ld_lo}),
       .raddr(rom_addr),
       .rdata(ram_data)

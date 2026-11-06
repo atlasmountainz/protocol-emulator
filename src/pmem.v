@@ -12,16 +12,16 @@
 module pmem (
     input  wire        clk,
     input  wire        we,
-    input  wire [6:0]  waddr,
+    input  wire [5:0]  waddr,
     input  wire [15:0] wdata,
     input  wire [7:0]  raddr,
     output wire [15:0] rdata
 );
-  reg [15:0] mem [0:127];
+  reg [15:0] mem [0:63];
 
   always @(posedge clk) begin
     if (we) mem[waddr] <= wdata;
   end
 
-  assign rdata = raddr[7] ? 16'hF000 : mem[raddr[6:0]];
+  assign rdata = (raddr[7] | raddr[6]) ? 16'hF000 : mem[raddr[5:0]];
 endmodule
