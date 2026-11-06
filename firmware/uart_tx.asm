@@ -3,13 +3,22 @@
 ; Input pins : 0-7 = ui_in (data byte), 8 = uio_in[0] (start, level-triggered)
 ; Output pins: 0 = TX, 1 = BUSY
 ;
+; uart_send is a subroutine (A = byte to send, A is destroyed) so other protocols can
+; use the UART too: the I2C firmware calls it to print the byte it reads.
+;
 ; Cycle budget: every instruction takes 1 cycle, WAIT n takes 1+n.
 ; Per data bit: SHR(1) + OUTC(1) + WAIT 430 (431) + DJNZ(1) = 434 cycles.
 
-uart_start: PIN 0 1       ; TX idles high
+uart_start:
+        PIN  0 1              ; TX idles high
         PIN  1 0              ; not busy
 idle:   JPIN 8 0 idle         ; spin while start is low
         IN                    ; A = data byte
+        CALL uart_send
+rel:    JPIN 8 1 rel          ; wait for start to be released
+        JMP  idle
+
+uart_send:
         PIN  1 1              ; busy
         PIN  0 0              ; start bit
         LDX  8                ; 8 data bits
@@ -21,6 +30,5 @@ bit:    SHR                   ; C = next data bit (LSB first)
         NOP                   ; pad: loop path runs SHR+OUTC (2 cycles), exit path PIN+NOP
         PIN  0 1              ; stop bit
         WAIT 430
-rel:    JPIN 8 1 rel          ; wait for start to be released
         PIN  1 0              ; not busy
-        JMP  idle
+        RET

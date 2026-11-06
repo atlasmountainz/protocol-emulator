@@ -26,7 +26,12 @@ OPS = {
     "IN":   (0xB, []),                      # A = input pins [7:0]
     "SHL":  (0xC, []),                      # C = A[7]; A <<= 1
     "INB":  (0xD, ["pin"]),                 # A[0] = input pin
-    "HALT": (0xF, []),
+    "CALL": (0xE, ["addr"]),                # push return address, jump
+    # extended family (opcode 0xF, sub-opcode in bits 11:8)
+    "HALT": (0xF, []),                      # stop until reset
+    "RET":  (0xF, []),                      # pop return address, jump
+    "ODRV": (0xF, ["pin", "val"]),          # open-drain pin: val=0 pull low, val=1 release
+    "ODRVC": (0xF, ["pin"]),                # open-drain pin: pull low if C=0, release if C=1
 }
 
 
@@ -68,6 +73,17 @@ def encode(mn, args, labels, lineno):
     elif mn == "INB":
         rng("pin", 15)
         w |= v["pin"] << 7
+    elif mn == "CALL":
+        rng("addr", ROM_DEPTH - 1)
+        w |= v["addr"]
+    elif mn == "RET":
+        w |= 0x1 << 8
+    elif mn == "ODRV":
+        rng("pin", 7); rng("val", 1)
+        w |= (0x2 << 8) | (v["val"] << 3) | v["pin"]
+    elif mn == "ODRVC":
+        rng("pin", 7)
+        w |= (0x3 << 8) | v["pin"]
     return w
 
 

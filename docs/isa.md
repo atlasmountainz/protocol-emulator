@@ -6,6 +6,12 @@ every instruction takes **1 clock**, except `WAIT n`, which takes **1 + n** cloc
 State: `A` (8-bit accumulator/shift register), `X` (8-bit loop counter), `C` (carry bit),
 `OUT` (8 output pins).
 
+Open-drain pins `0-7` map to `uio[7:0]`. They are never driven high: `ODRV` either pulls the line
+low or releases it, and the external pull-up does the rest. The pad can always be read back as
+input pins `8-15`, so a slave holding a line low (I2C clock stretching) is visible to the firmware.
+
+Return stack: 4 entries, circular. Abandoning a call with a `JMP` instead of `RET` is safe.
+
 Input pins: `0-7` = `ui_in[7:0]`, `8-15` = `uio_in[7:0]` (both pass through a 2-flop synchroniser).
 Output pins: `0-7` = `uo_out[7:0]`. Output pins reset to `0x01` so a UART TX line idles high.
 
@@ -25,11 +31,16 @@ Output pins: `0-7` = `uo_out[7:0]`. Output pins reset to `0x01` so a UART TX lin
 | 0xB | `IN`            | `1011 ---- ---- ----`          | `A = IN[7:0]` |
 | 0xC | `SHL`           | `1100 ---- ---- ----`          | `C = A[7]; A = A << 1` |
 | 0xD | `INB p`         | `1101 -ppp p--- ----`          | `A[0] = IN[p]` (p = 0..15) |
-| 0xF | `HALT`          | `1111 ---- ---- ----`          | stop until reset |
+| 0xE | `CALL addr`     | `1110 ---- -aaa aaaa`          | push `PC+1` on the return stack, `PC = addr` |
+| 0xF | `HALT`          | `1111 0000 ---- ----`          | stop until reset |
+| 0xF | `RET`           | `1111 0001 ---- ----`          | pop the return stack into `PC` |
+| 0xF | `ODRV p v`      | `1111 0010 ---- vppp`          | open-drain pin `p`: `v=0` pulls it low, `v=1` releases it (p = 0..7) |
+| 0xF | `ODRVC p`       | `1111 0011 ---- -ppp`          | open-drain pin `p`: pulls low if `C=0`, releases if `C=1` |
 
 Notes:
 - `LDX 0` loops 256 times (X wraps to 255 before the first test).
 - Unused ROM addresses read as `HALT`.
+- ROM is 128 words (7-bit PC). The current firmware (boot, UART, SPI, I2C) uses 120 of them.
 - Programs are written in assembly (`firmware/*.asm`) and turned into `src/rom.v` by
   `tools/build_rom.sh`, which assembles `firmware/main.asm` (boot dispatcher), `uart_tx.asm` and
   `spi_master.asm` into one ROM. Labels are global across files.

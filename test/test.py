@@ -7,11 +7,12 @@ from cocotb.triggers import ClockCycles, RisingEdge
 CLKS_PER_BIT = 434  # must match project.v
 
 
-async def reset(dut, mode=0):
-    """Reset the chip. `mode` is the firmware-select pin (uio_in[7]): 0 = UART, 1 = SPI."""
+async def reset(dut, mode=0, uio=None):
+    """Reset the chip. `mode` is the SPI select pin (uio_in[7]); `uio` overrides the whole
+    uio_in value (the I2C mode pin is uio_in[6]). Neither set = UART."""
     dut.ena.value = 1
     dut.ui_in.value = 0
-    dut.uio_in.value = mode << 7
+    dut.uio_in.value = (mode << 7) if uio is None else uio
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
@@ -196,3 +197,241 @@ async def test_spi_master(dut):
         assert second == recv, f"MISO was not received correctly: echoed 0x{second:02X}, expected 0x{recv:02X}"
         assert slave.sck_in_idle, "SCK must stay low while CS_N is high"
         assert int(dut.uo_out.value) & 0b1111 == 0b0001, "after transfer: CS_N high, SCK low, MOSI low, not busy"
+
+
+# ---------------------------------------------------------------- I2C (mode pin uio_in[6])
+
+I2C_MODE_PIN = 0x40
+SCL, SDA = 2, 3   # uio[2], uio[3]
+I2C_IDLE_BUS = I2C_MODE_PIN | (1 << SCL) | (1 << SDA)  # both lines pulled high
+
+# Standard-mode (100 kHz) minimums from the I2C spec, in 20 ns clock cycles
+T_LOW, T_HIGH = 235, 200        # SCL low 4.7 us, SCL high 4.0 us
+T_HD_STA, T_SU_STA = 200, 235   # START hold 4.0 us, repeated-START setup 4.7 us
+T_SU_STO, T_BUF = 200, 235      # STOP setup 4.0 us, bus free time 4.7 us
+T_SU_DAT = 13                   # data setup 250 ns
+
+
+class I2CEeprom:
+    """Open-drain I2C bus plus a simple EEPROM slave (7-bit address, 1-byte pointer).
+
+    Wired-AND bus: a line is low if the master pulls it (uio_oe) or the slave does.
+    Drives the pad inputs every clock and checks the master's timing against the spec.
+    """
+
+    def __init__(self, dut, mem, addr=0x50, stretch=0):
+        self.dut, self.mem, self.addr = dut, dict(mem), addr
+        self.stretch = stretch          # cycles to hold SCL low after the address byte (once)
+        self.stretch_left = 0
+        self.stretch_events = 0
+        self.start_pin = 0              # uio_in[0], driven by the test
+        self.sda_low = False            # slave pulling SDA
+        self.mode, self.expect = "idle", None
+        self.bits = self.shift = self.ptr = 0
+        self.log = []                   # every byte the master sent
+        self.violations = []
+
+    def drive(self, scl, sda):
+        self.dut.uio_in.value = (I2C_MODE_PIN | self.start_pin | (scl << SCL) | (sda << SDA))
+
+    def levels(self):
+        oe = int(self.dut.uio_oe.value)
+        scl = 0 if ((oe >> SCL) & 1 or self.stretch_left > 0) else 1
+        sda = 0 if ((oe >> SDA) & 1 or self.sda_low) else 1
+        return scl, sda
+
+    def bad(self, cyc, what):
+        self.violations.append(f"cycle {cyc}: {what}")
+
+    async def run(self):
+        cyc = 0
+        prev_scl = prev_sda = 1
+        t_fall = t_rise = t_start = t_stop = t_sda = None
+        after_start = False
+        master_nack = 1
+        while True:
+            await RisingEdge(self.dut.clk)
+            cyc += 1
+            scl, sda = self.levels()
+
+            if sda != prev_sda:
+                t_sda = cyc
+            # START: SDA falls while SCL high
+            if prev_scl == 1 and scl == 1 and prev_sda == 1 and sda == 0:
+                if t_rise is not None and t_stop is None and cyc - t_rise < T_SU_STA:
+                    self.bad(cyc, f"tSU;STA {cyc - t_rise} < {T_SU_STA}")
+                if t_stop is not None and cyc - t_stop < T_BUF:
+                    self.bad(cyc, f"tBUF {cyc - t_stop} < {T_BUF}")
+                t_start, t_stop, after_start = cyc, None, True
+                self.mode, self.expect, self.bits, self.shift = "rx", "addr", 0, 0
+                self.sda_low = False
+            # STOP: SDA rises while SCL high
+            elif prev_scl == 1 and scl == 1 and prev_sda == 0 and sda == 1:
+                if t_rise is not None and cyc - t_rise < T_SU_STO:
+                    self.bad(cyc, f"tSU;STO {cyc - t_rise} < {T_SU_STO}")
+                t_stop = cyc
+                self.mode, self.sda_low = "idle", False
+            # SCL rising edge
+            if prev_scl == 0 and scl == 1:
+                if t_fall is not None and cyc - t_fall < T_LOW:
+                    self.bad(cyc, f"tLOW {cyc - t_fall} < {T_LOW}")
+                if t_sda is not None and 0 <= cyc - t_sda < T_SU_DAT and self.mode == "rx":
+                    self.bad(cyc, f"tSU;DAT {cyc - t_sda} < {T_SU_DAT}")
+                t_rise = cyc
+                if self.mode == "rx":
+                    self.shift = ((self.shift << 1) | sda) & 0xFF
+                    self.bits += 1
+                elif self.mode == "mack":
+                    master_nack = sda
+            # SCL falling edge
+            if prev_scl == 1 and scl == 0:
+                if after_start:
+                    if cyc - t_start < T_HD_STA:
+                        self.bad(cyc, f"tHD;STA {cyc - t_start} < {T_HD_STA}")
+                    after_start = False
+                elif t_rise is not None and cyc - t_rise < T_HIGH:
+                    self.bad(cyc, f"tHIGH {cyc - t_rise} < {T_HIGH}")
+                t_fall = cyc
+                self.on_fall(master_nack)
+
+            if self.stretch_left > 0:
+                self.stretch_left -= 1
+            scl, sda = self.levels()
+            self.drive(scl, sda)
+            prev_scl, prev_sda = scl, sda
+
+    def on_fall(self, master_nack):
+        if self.mode == "rx" and self.bits == 8:
+            byte = self.shift
+            self.log.append(byte)
+            ack = True
+            if self.expect == "addr":
+                if byte >> 1 == self.addr:
+                    self.expect = "ptr" if byte & 1 == 0 else "read"
+                    if self.stretch:           # hold SCL low once, after the address byte
+                        self.stretch_left, self.stretch, self.stretch_events = self.stretch, 0, 1
+                else:
+                    ack = False
+            elif self.expect == "ptr":
+                self.ptr, self.expect = byte, "ignore"
+            self.bits = self.shift = 0
+            if ack:
+                self.sda_low, self.mode = True, "ack"
+            else:
+                self.mode = "idle"             # not for us: ignore until STOP/START
+        elif self.mode == "ack":
+            self.sda_low = False
+            if self.expect == "read":
+                self.txbyte, self.txidx, self.mode = self.mem.get(self.ptr, 0xFF), 0, "tx"
+                self.sda_low = (self.txbyte >> 7) & 1 == 0
+            else:
+                self.mode, self.bits, self.shift = "rx", 0, 0
+        elif self.mode == "tx":
+            self.txidx += 1
+            if self.txidx < 8:
+                self.sda_low = (self.txbyte >> (7 - self.txidx)) & 1 == 0
+            else:
+                self.sda_low, self.mode = False, "mack"
+        elif self.mode == "mack":
+            self.sda_low, self.mode = False, "idle"
+
+
+async def uart_receive(dut, limit=80000):
+    """Wait for a UART frame on uo_out[0] and return the byte (samples mid-bit)."""
+    for _ in range(limit):
+        await RisingEdge(dut.clk)
+        if int(dut.uo_out.value) & 1 == 0:
+            break
+    else:
+        raise AssertionError("no UART frame appeared")
+    await ClockCycles(dut.clk, CLKS_PER_BIT // 2)
+    assert int(dut.uo_out.value) & 1 == 0, "start bit should be 0"
+    value = 0
+    for i in range(8):
+        await ClockCycles(dut.clk, CLKS_PER_BIT)
+        value |= (int(dut.uo_out.value) & 1) << i
+    await ClockCycles(dut.clk, CLKS_PER_BIT)
+    assert int(dut.uo_out.value) & 1 == 1, "stop bit should be 1"
+    return value
+
+
+async def i2c_transaction(dut, bus, pointer):
+    """Hold start with the pointer byte on ui_in, return the byte printed on the UART."""
+    dut.ui_in.value = pointer
+    bus.start_pin = 1
+    rx = cocotb.start_soon(uart_receive(dut))
+    await ClockCycles(dut.clk, 8)
+    bus.start_pin = 0
+    return await rx
+
+
+async def wait_idle(dut, cycles=3000):
+    """Wait for I2C BUSY (uo[3]) to clear."""
+    for _ in range(cycles):
+        await RisingEdge(dut.clk)
+        if (int(dut.uo_out.value) >> 3) & 1 == 0:
+            return
+    raise AssertionError("BUSY never cleared")
+
+
+@cocotb.test()
+async def test_i2c_eeprom_read(dut):
+    """I2C firmware: EEPROM random read, bridged onto the UART, checked against the I2C spec."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut, uio=I2C_IDLE_BUS)
+    bus = I2CEeprom(dut, {0x07: 0x5C, 0x00: 0xFF, 0xA5: 0x3C})
+    cocotb.start_soon(bus.run())
+
+    for pointer, expected in ((0x07, 0x5C), (0x00, 0xFF), (0xA5, 0x3C)):
+        bus.log.clear()
+        got = await i2c_transaction(dut, bus, pointer)
+        dut._log.info(f"I2C: pointer 0x{pointer:02X} -> UART printed 0x{got:02X}; "
+                      f"bytes on bus {[hex(b) for b in bus.log]}")
+        assert got == expected, f"expected 0x{expected:02X}, got 0x{got:02X}"
+        assert bus.log == [0xA0, pointer, 0xA1], f"unexpected bus traffic {bus.log}"
+        await wait_idle(dut)
+        assert (int(dut.uo_out.value) >> 4) & 1 == 0, "ERR must stay low on a good transfer"
+        assert int(dut.uio_oe.value) & 0b1100 == 0, "bus must be released (both lines high) when idle"
+        await ClockCycles(dut.clk, 300)   # let the bus-free time pass before the next START
+
+    assert not bus.violations, "I2C timing violations:\n" + "\n".join(bus.violations)
+
+
+@cocotb.test()
+async def test_i2c_nack(dut):
+    """A missing slave must raise ERR, release the bus with a STOP, and print nothing."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut, uio=I2C_IDLE_BUS)
+    bus = I2CEeprom(dut, {0x07: 0x5C}, addr=0x51)   # nobody answers at 0x50
+    cocotb.start_soon(bus.run())
+
+    dut.ui_in.value = 0x07
+    bus.start_pin = 1
+    await ClockCycles(dut.clk, 8)
+    bus.start_pin = 0
+    tx_low = False
+    for _ in range(8000):
+        await RisingEdge(dut.clk)
+        tx_low |= int(dut.uo_out.value) & 1 == 0
+    assert (int(dut.uo_out.value) >> 4) & 1 == 1, "ERR should be high after a NACK"
+    assert (int(dut.uo_out.value) >> 3) & 1 == 0, "BUSY should clear once the bus is released"
+    assert not tx_low, "nothing should be printed on the UART after a NACK"
+    assert bus.log == [0xA0], f"master should stop after the NACKed address: {bus.log}"
+    assert int(dut.uio_oe.value) & 0b1100 == 0, "bus must be released after the STOP"
+    assert not bus.violations, "I2C timing violations:\n" + "\n".join(bus.violations)
+
+
+@cocotb.test()
+async def test_i2c_clock_stretching(dut):
+    """A slave that holds SCL low must just slow the master down, not corrupt data."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut, uio=I2C_IDLE_BUS)
+    bus = I2CEeprom(dut, {0x42: 0x99}, stretch=900)
+    cocotb.start_soon(bus.run())
+
+    got = await i2c_transaction(dut, bus, 0x42)
+    await wait_idle(dut)
+    assert bus.stretch_events == 1, "the slave should have stretched the clock"
+    assert got == 0x99, f"expected 0x99 after stretching, got 0x{got:02X}"
+    assert bus.log == [0xA0, 0x42, 0xA1], f"unexpected bus traffic {bus.log}"
+    assert not bus.violations, "I2C timing violations:\n" + "\n".join(bus.violations)

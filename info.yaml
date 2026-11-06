@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "Protocol emulator CPU (UART + SPI firmware)"      # Project title
+  title:        "Protocol emulator CPU (UART + SPI + I2C firmware)"      # Project title
   author:       "atlasmountainz"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Programmable protocol emulator ASIC - tiny cycle-exact CPU running UART TX or SPI master firmware from ROM"      # One line description of what your project does
+  description:  "Programmable protocol emulator ASIC - tiny cycle-exact CPU running UART, SPI or I2C firmware from ROM"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     0       # Clock frequency in Hz (or 0 if not applicable)
 
@@ -38,8 +38,8 @@ pinout:
   uo[0]: "UART_TX / SPI_CS_N"
   uo[1]: "UART_BUSY / SPI_SCK"
   uo[2]: "SPI_MOSI"
-  uo[3]: "SPI_BUSY"
-  uo[4]: ""
+  uo[3]: "SPI_BUSY / I2C_BUSY"
+  uo[4]: "I2C_ERR (slave NACK)"
   uo[5]: ""
   uo[6]: ""
   uo[7]: ""
@@ -47,12 +47,12 @@ pinout:
   # Bidirectional pins
   uio[0]: "START"
   uio[1]: "SPI_MISO"
-  uio[2]: ""
-  uio[3]: ""
+  uio[2]: "I2C_SCL (open-drain)"
+  uio[3]: "I2C_SDA (open-drain)"
   uio[4]: ""
   uio[5]: ""
-  uio[6]: ""
-  uio[7]: "MODE (0=UART, 1=SPI)"
+  uio[6]: "MODE_I2C (1=I2C)"
+  uio[7]: "MODE_SPI (1=SPI)"
 
 # Do not change!
 yaml_version: 6

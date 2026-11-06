@@ -14,7 +14,8 @@ module cpu #(
     input  wire        clk,
     input  wire        rst_n,
     input  wire [15:0] pins_in,    // synchronised input pins
-    output reg  [7:0]  pins_out,   // output pins
+    output reg  [7:0]  pins_out,   // push-pull output pins
+    output reg  [7:0]  od_pull,    // open-drain pins: 1 = pull the line low, 0 = released
     output wire [6:0]  rom_addr,   // program counter
     input  wire [15:0] rom_data    // instruction at rom_addr
 );
@@ -22,7 +23,10 @@ module cpu #(
   localparam [3:0] OP_NOP = 4'h0, OP_PIN = 4'h1, OP_OUT = 4'h2, OP_WAIT = 4'h3,
                    OP_JMP = 4'h4, OP_JPIN = 4'h5, OP_LDA = 4'h6, OP_SHR = 4'h7,
                    OP_OUTC = 4'h8, OP_LDX = 4'h9, OP_DJNZ = 4'hA, OP_IN = 4'hB,
-                   OP_SHL = 4'hC, OP_INB = 4'hD, OP_HALT = 4'hF;
+                   OP_SHL = 4'hC, OP_INB = 4'hD, OP_CALL = 4'hE, OP_EXT = 4'hF;
+
+  // Sub-opcodes of the extended family (rom_data[11:8] when op == OP_EXT)
+  localparam [3:0] EXT_HALT = 4'h0, EXT_RET = 4'h1, EXT_ODRV = 4'h2, EXT_ODRVC = 4'h3;
 
   reg [6:0]  pc;
   reg [7:0]  a;         // accumulator / shift register
@@ -31,9 +35,16 @@ module cpu #(
   reg [11:0] wait_cnt;  // remaining stall cycles
   reg        halted;
 
+  // Return-address stack: 4 entries, circular. Nesting deeper than 4 overwrites the oldest
+  // entry. Abandoning a call without RET (e.g. jumping to an error handler) is harmless
+  // because only the relative position of the stack pointer matters.
+  reg [6:0] stack [0:3];
+  reg [1:0] sp;
+
   assign rom_addr = pc;
 
-  wire [3:0] op = rom_data[15:12];
+  wire [3:0] op  = rom_data[15:12];
+  wire [3:0] ext = rom_data[11:8];
 
   always @(posedge clk) begin
     if (!rst_n) begin
@@ -43,7 +54,9 @@ module cpu #(
       c        <= 1'b0;
       wait_cnt <= 12'd0;
       halted   <= 1'b0;
+      sp       <= 2'd0;
       pins_out <= OUT_RESET;
+      od_pull  <= 8'd0;
     end else if (wait_cnt != 12'd0) begin
       wait_cnt <= wait_cnt - 1'b1;
     end else if (!halted) begin
@@ -71,9 +84,27 @@ module cpu #(
           a <= {a[6:0], 1'b0};
         end
         OP_INB:  a <= {a[7:1], pins_in[rom_data[10:7]]};  // A[0] = input pin
-        OP_HALT: begin
-          halted <= 1'b1;
-          pc     <= pc;
+        OP_CALL: begin
+          stack[sp] <= pc + 1'b1;
+          sp        <= sp + 1'b1;
+          pc        <= rom_data[6:0];
+        end
+        OP_EXT: begin
+          case (ext)
+            EXT_HALT: begin
+              halted <= 1'b1;
+              pc     <= pc;
+            end
+            EXT_RET: begin
+              sp <= sp - 1'b1;
+              pc <= stack[sp - 1'b1];
+            end
+            // ODRV p v : v=0 pulls open-drain pin p low, v=1 releases it
+            EXT_ODRV:  od_pull[rom_data[2:0]] <= ~rom_data[3];
+            // ODRVC p  : pulls pin p low if C=0, releases it if C=1
+            EXT_ODRVC: od_pull[rom_data[2:0]] <= ~c;
+            default: ;
+          endcase
         end
         default: ;  // NOP and undefined opcodes do nothing
       endcase
