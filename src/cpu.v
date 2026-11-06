@@ -22,7 +22,7 @@ module cpu #(
   localparam [3:0] OP_NOP = 4'h0, OP_PIN = 4'h1, OP_OUT = 4'h2, OP_WAIT = 4'h3,
                    OP_JMP = 4'h4, OP_JPIN = 4'h5, OP_LDA = 4'h6, OP_SHR = 4'h7,
                    OP_OUTC = 4'h8, OP_LDX = 4'h9, OP_DJNZ = 4'hA, OP_IN = 4'hB,
-                   OP_HALT = 4'hF;
+                   OP_SHL = 4'hC, OP_INB = 4'hD, OP_HALT = 4'hF;
 
   reg [6:0]  pc;
   reg [7:0]  a;         // accumulator / shift register
@@ -66,6 +66,11 @@ module cpu #(
           if (x != 8'd1) pc <= rom_data[6:0];
         end
         OP_IN:   a <= pins_in[7:0];
+        OP_SHL: begin
+          c <= a[7];
+          a <= {a[6:0], 1'b0};
+        end
+        OP_INB:  a <= {a[7:1], pins_in[rom_data[10:7]]};  // A[0] = input pin
         OP_HALT: begin
           halted <= 1'b1;
           pc     <= pc;

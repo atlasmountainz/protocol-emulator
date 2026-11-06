@@ -23,10 +23,13 @@ Output pins: `0-7` = `uo_out[7:0]`. Output pins reset to `0x01` so a UART TX lin
 | 0x9 | `LDX imm8`      | `1001 ---- iiii iiii`          | `X = imm8` |
 | 0xA | `DJNZ addr`     | `1010 ---- -aaa aaaa`          | `X = X - 1; if X != 0 then PC = addr` |
 | 0xB | `IN`            | `1011 ---- ---- ----`          | `A = IN[7:0]` |
+| 0xC | `SHL`           | `1100 ---- ---- ----`          | `C = A[7]; A = A << 1` |
+| 0xD | `INB p`         | `1101 -ppp p--- ----`          | `A[0] = IN[p]` (p = 0..15) |
 | 0xF | `HALT`          | `1111 ---- ---- ----`          | stop until reset |
 
 Notes:
 - `LDX 0` loops 256 times (X wraps to 255 before the first test).
 - Unused ROM addresses read as `HALT`.
 - Programs are written in assembly (`firmware/*.asm`) and turned into `src/rom.v` by
-  `python3 tools/asm.py firmware/uart_tx.asm src/rom.v`.
+  `tools/build_rom.sh`, which assembles `firmware/main.asm` (boot dispatcher), `uart_tx.asm` and
+  `spi_master.asm` into one ROM. Labels are global across files..

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tiny assembler for the protocol-emulator CPU.
 
-Usage: asm.py firmware/uart_tx.asm src/rom.v
+Usage: asm.py OUT.v IN1.asm [IN2.asm ...]   (see tools/build_rom.sh)
 
 Syntax: one instruction per line, `;` starts a comment, `label:` defines a label.
 Numbers are decimal or 0x-hex. See docs/isa.md for the instruction set.
@@ -24,6 +24,8 @@ OPS = {
     "LDX":  (0x9, ["imm8"]),
     "DJNZ": (0xA, ["addr"]),                # X -= 1; jump if X != 0
     "IN":   (0xB, []),                      # A = input pins [7:0]
+    "SHL":  (0xC, []),                      # C = A[7]; A <<= 1
+    "INB":  (0xD, ["pin"]),                 # A[0] = input pin
     "HALT": (0xF, []),
 }
 
@@ -63,6 +65,9 @@ def encode(mn, args, labels, lineno):
     elif mn == "OUTC":
         rng("pin", 7)
         w |= v["pin"] << 8
+    elif mn == "INB":
+        rng("pin", 15)
+        w |= v["pin"] << 7
     return w
 
 
@@ -115,12 +120,14 @@ def emit_verilog(words, src):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) < 3:
         raise SystemExit(__doc__)
-    src, dst = sys.argv[1], sys.argv[2]
-    words, labels = assemble(open(src).read())
-    open(dst, "w").write(emit_verilog(words, src))
-    print(f"assembled {len(words)} instructions -> {dst}")
+    dst, srcs = sys.argv[1], sys.argv[2:]
+    # Source files are concatenated in order; labels are global across files.
+    text = "\n".join(open(s).read() for s in srcs)
+    words, labels = assemble(text)
+    open(dst, "w").write(emit_verilog(words, ", ".join(srcs)))
+    print(f"assembled {len(words)} instructions from {len(srcs)} file(s) -> {dst}")
 
 
 if __name__ == "__main__":

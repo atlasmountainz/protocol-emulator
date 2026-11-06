@@ -6,7 +6,7 @@
 ; Cycle budget: every instruction takes 1 cycle, WAIT n takes 1+n.
 ; Per data bit: SHR(1) + OUTC(1) + WAIT 430 (431) + DJNZ(1) = 434 cycles.
 
-        PIN  0 1              ; TX idles high
+uart_start: PIN 0 1       ; TX idles high
         PIN  1 0              ; not busy
 idle:   JPIN 8 0 idle         ; spin while start is low
         IN                    ; A = data byte
