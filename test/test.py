@@ -1,10 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import os
+import random
+import sys
+from pathlib import Path
+
 import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge
 
+from loader import load_program
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+import asm  # noqa: E402
+from load_image import build_image  # noqa: E402
+
 CLKS_PER_BIT = 434  # must match project.v
+
+# FROM_RAM=1 make: run every test with the firmware loaded into the program memory over the
+# pins instead of running the built-in ROM. The results must be identical.
+FROM_RAM = os.environ.get("FROM_RAM") == "1"
+FIRMWARE = [str(Path(__file__).resolve().parent.parent / "firmware" / f)
+            for f in ("main.asm", "uart_tx.asm", "spi_master.asm", "i2c_master.asm")]
 
 
 async def reset(dut, mode=0, uio=None):
@@ -16,6 +33,10 @@ async def reset(dut, mode=0, uio=None):
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
+    if FROM_RAM:
+        start_uio = int(dut.uio_in.value)
+        await load_program(dut, build_image(FIRMWARE))
+        dut.uio_in.value = start_uio
     await ClockCycles(dut.clk, 2)
 
 
@@ -435,3 +456,92 @@ async def test_i2c_clock_stretching(dut):
     assert got == 0x99, f"expected 0x99 after stretching, got 0x{got:02X}"
     assert bus.log == [0xA0, 0x42, 0xA1], f"unexpected bus traffic {bus.log}"
     assert not bus.violations, "I2C timing violations:\n" + "\n".join(bus.violations)
+
+
+# ---- Loadable program memory ---------------------------------------------------------------
+
+async def release_load(dut, uio=0):
+    """Lower LOAD (the CPU starts at address 0 of the loaded program)."""
+    dut.ui_in.value = 0
+    dut.uio_in.value = uio
+    await ClockCycles(dut.clk, 6)
+
+
+def assemble_words(text):
+    words, _ = asm.assemble(text)
+    return words + [0xF000] * (128 - len(words))
+
+
+@cocotb.test()
+async def test_load_custom_program(dut):
+    """A program the chip was not built with: load it, run it, then load a different one."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut)
+    rng = random.Random(7)
+
+    # Program 1: count a byte up on the push-pull pins forever.
+    prog1 = assemble_words("""
+        LDA 0
+    loop:
+        OUT 0x3C
+        WAIT 7
+        OUT 0xC3
+        WAIT 7
+        JMP loop
+    """)
+    await load_program(dut, prog1, rng)
+    await release_load(dut)
+    seen = set()
+    for _ in range(100):
+        await ClockCycles(dut.clk, 1)
+        seen.add(int(dut.uo_out.value))
+    assert seen == {0x3C, 0xC3}, f"unexpected outputs {seen}"
+
+    # Program 2 replaces it without a reset, and ends in HALT with a fixed output.
+    prog2 = assemble_words("""
+        OUT 0xA5
+        HALT
+    """)
+    await load_program(dut, prog2, rng)
+    await release_load(dut)
+    await ClockCycles(dut.clk, 20)
+    assert int(dut.uo_out.value) == 0xA5
+    await ClockCycles(dut.clk, 50)
+    assert int(dut.uo_out.value) == 0xA5, "HALT must stop the CPU"
+
+
+@cocotb.test()
+async def test_loader_ignores_unstrobed_data(dut):
+    """Data pins changing, or STROBE held high, must not write more than one byte per edge."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut)
+    prog = assemble_words("OUT 0x5A\nHALT")
+    await load_program(dut, prog)
+    # Wiggle the data pins with LOAD still high but no strobe: nothing may be written.
+    for v in (0x00, 0xFF, 0x12, 0x34):
+        dut.ui_in.value = v
+        await ClockCycles(dut.clk, 5)
+    await release_load(dut)
+    await ClockCycles(dut.clk, 20)
+    assert int(dut.uo_out.value) == 0x5A
+
+
+@cocotb.test()
+async def test_reset_returns_to_rom(dut):
+    """After a reset without LOAD the built-in firmware runs again."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut)
+    await load_program(dut, assemble_words("OUT 0xA5\nHALT"))
+    await release_load(dut)
+    await ClockCycles(dut.clk, 20)
+    assert int(dut.uo_out.value) == 0xA5
+
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+    await ClockCycles(dut.clk, 30)
+    assert int(dut.uo_out.value) == 0x01, "ROM firmware (UART idle) must run again"
+    got = await send_and_capture(dut, 0x3C)
+    assert got == 0x3C

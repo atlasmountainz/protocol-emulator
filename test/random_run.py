@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Run the RTL-vs-model differential test over many random programs.
 
-Usage: python3 random_run.py [NUM_SEEDS] [FIRST_SEED]
+Usage: python3 random_run.py [--ram] [NUM_SEEDS] [FIRST_SEED]
+
+--ram loads each program into the chip's loadable program memory over the pins (first 128 words)
+instead of using the simulation-only ROM.
 
 Each seed makes a random program and random pin stimulus, runs it on the RTL (Icarus) and on
 test/isa_model.py, and compares every architectural register on every clock edge. Fails if any
@@ -23,8 +26,10 @@ REQUIRED = ["PIN", "OUT", "WAIT", "JMP", "JPIN1_taken", "JPIN1_fall", "JPIN0_tak
 
 
 def main():
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 40
-    first = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    args = [a for a in sys.argv[1:] if a != "--ram"]
+    ram = "--ram" in sys.argv[1:]
+    n = int(args[0]) if len(args) > 0 else 40
+    first = int(args[1]) if len(args) > 1 else 1
     work = HERE / "sim_build" / "random"
     work.mkdir(parents=True, exist_ok=True)
     rom_src = HERE / "rom_random.v"
@@ -34,7 +39,8 @@ def main():
         hexf, cov = work / f"prog_{seed}.hex", work / f"cov_{seed}.json"
         write_hex(gen_program(seed), hexf)
         env = dict(os.environ, PROG_SEED=str(seed), PROG_HEX=str(hexf), COV_OUT=str(cov),
-                   PYTHONPATH=str(HERE))
+                   PYTHONPATH=str(HERE),
+                  LOAD_RAM="1" if ram else "0")
         cmd = ["make", "-C", str(HERE), "COCOTB_TEST_MODULES=random_test",
                f"ROM_SRC={rom_src}", "SIM_BUILD=sim_build/rand", f"PLUSARGS=+prog={hexf}",
                f"COCOTB_RESULTS_FILE={work}/results_{seed}.xml"]

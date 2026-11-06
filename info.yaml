@@ -19,6 +19,7 @@ project:
   source_files:
     - "project.v"
     - "cpu.v"
+    - "pmem.v"
     - "rom.v"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
@@ -49,8 +50,8 @@ pinout:
   uio[1]: "SPI_MISO"
   uio[2]: "I2C_SCL (open-drain)"
   uio[3]: "I2C_SDA (open-drain)"
-  uio[4]: ""
-  uio[5]: ""
+  uio[4]: "LOAD_STROBE (program loader)"
+  uio[5]: "LOAD (1 = load program memory)"
   uio[6]: "MODE_I2C (1=I2C)"
   uio[7]: "MODE_SPI (1=SPI)"
 
