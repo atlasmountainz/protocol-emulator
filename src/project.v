@@ -40,9 +40,8 @@ module tt_um_atlasmountainz_protocol_emulator (
     end
   end
 
-  wire [7:0]  rom_addr;
-  wire [15:0] rom_data;
-  wire [15:0] ram_data;
+  wire [7:0]  seq_addr, tgt_addr;
+  wire [15:0] seq_rom, tgt_rom, seq_ram, tgt_ram;
   wire [7:0]  od_pull;
 
   // ---- Program loader --------------------------------------------------------------------
@@ -80,11 +79,14 @@ module tt_um_atlasmountainz_protocol_emulator (
       .we   (ram_we),
       .waddr(ld_ptr[7:1]),
       .wdata({ld_byte, ld_lo}),
-      .raddr(rom_addr),
-      .rdata(ram_data)
+      .raddr0(seq_addr),
+      .rdata0(seq_ram),
+      .raddr1(tgt_addr),
+      .rdata1(tgt_ram)
   );
 
-  wire [15:0] instr = use_ram ? ram_data : rom_data;
+  wire [15:0] seq_data = use_ram ? seq_ram : seq_rom;
+  wire [15:0] tgt_data = use_ram ? tgt_ram : tgt_rom;
 
   cpu u_cpu (
       .clk     (clk),
@@ -92,13 +94,20 @@ module tt_um_atlasmountainz_protocol_emulator (
       .pins_in (sync2),
       .pins_out(uo_out),
       .od_pull (od_pull),
-      .rom_addr(rom_addr),
-      .rom_data(instr)
+      .seq_addr(seq_addr),
+      .seq_data(seq_data),
+      .tgt_addr(tgt_addr),
+      .tgt_data(tgt_data)
   );
 
-  rom u_rom (
-      .addr(rom_addr),
-      .data(rom_data)
+  rom u_rom_seq (
+      .addr(seq_addr),
+      .data(seq_rom)
+  );
+
+  rom u_rom_tgt (
+      .addr(tgt_addr),
+      .data(tgt_rom)
   );
 
   // Open-drain bidirectional pins (uio): the output value is always 0, and the output
