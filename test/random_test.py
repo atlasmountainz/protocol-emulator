@@ -48,9 +48,10 @@ async def test_random_program(dut):
     # Pins change with different "stickiness" per run so both busy loops and fast exits occur
     hold = rng.choice([1, 1, 2, 5, 20])
     ui = uio = 0
-    # In RAM mode uio[5] (LOAD) must stay low while the program runs, or it would hold the CPU
-    # in reset; uio[4] (STROBE) is ignored then and is left random.
-    uio_mask = 0xDF if LOAD_RAM else 0xFF
+    # uio[5] is the loader's LOAD pin: while it is high the CPU is held in reset (and the program
+    # memory is selected), so the random stimulus keeps it low. uio[4] (STROBE) is ignored when
+    # LOAD is low and is left random.
+    uio_mask = 0xDF
 
     if LOAD_RAM:
         dut.rst_n.value = 1

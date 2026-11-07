@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v cpu.v pmem.v
+PROJECT_SOURCES = project.v cpu.v pmem.v pc_rep.v
 # The firmware ROM; random_run.py swaps in a simulation-only ROM for differential tests.
 ROM_SRC ?= $(SRC_DIR)/rom.v
 
