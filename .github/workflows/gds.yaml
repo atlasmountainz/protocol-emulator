@@ -18,6 +18,20 @@ jobs:
         with:
           pdk: ihp-sg13cmos5l # or ihp-sg13g2
 
+      - name: Print timing reports
+        if: always()
+        run: |
+          echo "=== report files ==="
+          find runs -name '*.rpt' -path '*sta*' | sort | head -60
+          for f in $(find runs -path '*stapostpnr*' -name 'max.rpt' | sort); do
+            echo "=== $f ==="
+            sed -n '1,140p' "$f"
+          done
+          for f in $(find runs -path '*stapostpnr*' -name 'summary.rpt' | sort); do
+            echo "=== $f ==="
+            cat "$f"
+          done
+
   precheck:
     needs: gds
     runs-on: ubuntu-24.04
