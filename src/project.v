@@ -41,6 +41,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   end
 
   wire [7:0]  rom_addr;
+  wire [111:0] rom_addr_rep;
   wire [15:0] rom_data;
   wire [15:0] ram_data;
   wire [7:0]  od_pull;
@@ -81,6 +82,7 @@ module tt_um_atlasmountainz_protocol_emulator (
       .waddr(ld_ptr[7:1]),
       .wdata({ld_byte, ld_lo}),
       .raddr(rom_addr),
+      .raddr_rep(rom_addr_rep),
       .rdata(ram_data)
   );
 
@@ -93,6 +95,7 @@ module tt_um_atlasmountainz_protocol_emulator (
       .pins_out(uo_out),
       .od_pull (od_pull),
       .rom_addr(rom_addr),
+      .rom_addr_rep(rom_addr_rep),
       .rom_data(instr)
   );
 
