@@ -17,6 +17,7 @@ module cpu #(
     output reg  [7:0]  pins_out,   // push-pull output pins
     output reg  [7:0]  od_pull,    // open-drain pins: 1 = pull the line low, 0 = released
     output wire [7:0]  rom_addr,   // program counter
+    output wire [111:0] rom_addr_rep, // 16 copies of rom_addr[6:0], one per instruction bit
     input  wire [15:0] rom_data    // instruction at rom_addr
 );
 
@@ -50,6 +51,39 @@ module cpu #(
   wire [3:0] op  = rom_data[15:12];
   wire [3:0] ext = rom_data[11:8];
 
+  // Next program counter (used when an instruction executes)
+  reg [7:0] pc_n;
+  always @* begin
+    pc_n = pc + 8'd1;
+    case (op)
+      OP_JMP, OP_CALL: pc_n = rom_data[7:0];
+      // JPIN: pin = rom_data[10:7], target = {rom_data[11], rom_data[6:0]}
+      OP_JPIN1: if (pins_in[rom_data[10:7]] == 1'b1) pc_n = {rom_data[11], rom_data[6:0]};
+      OP_JPIN0: if (pins_in[rom_data[10:7]] == 1'b0) pc_n = {rom_data[11], rom_data[6:0]};
+      OP_DJNZ: if (x != 8'd1) pc_n = rom_data[7:0];
+      OP_EXT: begin
+        if (ext == EXT_HALT) pc_n = pc;
+        if (ext == EXT_RET) pc_n = stack[sp - 2'd1];
+      end
+      default: ;
+    endcase
+  end
+
+  wire advance = rst_n && (wait_cnt == 12'd0) && !halted;
+
+  genvar g;
+  generate
+    for (g = 0; g < 16; g = g + 1) begin : g_rep
+      pc_rep u_rep (
+          .clk  (clk),
+          .rst_n(rst_n),
+          .adv  (advance),
+          .d    (pc_n[6:0]),
+          .q    (rom_addr_rep[7*g+:7])
+      );
+    end
+  endgenerate
+
   always @(posedge clk) begin
     if (!rst_n) begin
       pc       <= 8'd0;
@@ -65,15 +99,12 @@ module cpu #(
     end else if (wait_cnt != 12'd0) begin
       wait_cnt <= wait_cnt - 1'b1;
     end else if (!halted) begin
-      pc <= pc + 1'b1;
+      pc <= pc_n;
       case (op)
         OP_PIN:  pins_out[rom_data[10:8]] <= rom_data[0];
         OP_OUT:  pins_out <= rom_data[7:0];
         OP_WAIT: wait_cnt <= rom_data[11:0];
-        OP_JMP:  pc <= rom_data[7:0];
         // JPIN: pin = rom_data[10:7], target = {rom_data[11], rom_data[6:0]}
-        OP_JPIN1: if (pins_in[rom_data[10:7]] == 1'b1) pc <= {rom_data[11], rom_data[6:0]};
-        OP_JPIN0: if (pins_in[rom_data[10:7]] == 1'b0) pc <= {rom_data[11], rom_data[6:0]};
         OP_LDA:  a <= rom_data[7:0];
         OP_SHR: begin
           c <= a[0];
@@ -81,10 +112,7 @@ module cpu #(
         end
         OP_OUTC: pins_out[rom_data[10:8]] <= c;
         OP_LDX:  x <= rom_data[7:0];
-        OP_DJNZ: begin
-          x <= x - 1'b1;
-          if (x != 8'd1) pc <= rom_data[7:0];
-        end
+        OP_DJNZ: x <= x - 1'b1;
         OP_IN:   a <= pins_in[7:0];
         OP_SHL: begin
           c <= a[7];
@@ -94,18 +122,11 @@ module cpu #(
         OP_CALL: begin
           stack[sp] <= pc + 1'b1;
           sp        <= sp + 1'b1;
-          pc        <= rom_data[7:0];
         end
         OP_EXT: begin
           case (ext)
-            EXT_HALT: begin
-              halted <= 1'b1;
-              pc     <= pc;
-            end
-            EXT_RET: begin
-              sp <= sp - 1'b1;
-              pc <= stack[sp - 1'b1];
-            end
+            EXT_HALT: halted <= 1'b1;   // pc_n = pc
+            EXT_RET:  sp <= sp - 1'b1;
             // ODRV p v : v=0 pulls open-drain pin p low, v=1 releases it
             EXT_ODRV:  od_pull[rom_data[2:0]] <= ~rom_data[3];
             // ODRVC p  : pulls pin p low if C=0, releases it if C=1

@@ -15,13 +15,18 @@ module pmem (
     input  wire [6:0]  waddr,
     input  wire [15:0] wdata,
     input  wire [7:0]  raddr,
+    input  wire [111:0] raddr_rep,   // 16 copies of raddr[6:0], one per bit slice (fan-out)
     output wire [15:0] rdata
 );
-  reg [15:0] mem [0:127];
-
-  always @(posedge clk) begin
-    if (we) mem[waddr] <= wdata;
-  end
-
-  assign rdata = raddr[7] ? 16'hF000 : mem[raddr[6:0]];
+  // One 128-bit column per instruction bit, each read with its own copy of the address.
+  genvar j;
+  generate
+    for (j = 0; j < 16; j = j + 1) begin : g_col
+      reg [127:0] col;
+      always @(posedge clk) begin
+        if (we) col[waddr] <= wdata[j];
+      end
+      assign rdata[j] = raddr[7] ? (j >= 12) : col[raddr_rep[7*j+:7]];
+    end
+  endgenerate
 endmodule
