@@ -1,4 +1,4 @@
-; UART 8N1 transmitter, 434 clocks per bit (50 MHz / 115200 baud).
+; UART 8N1 transmitter, 108 slots = 432 clocks per bit (50 MHz / 115200 baud, 0.5% fast).
 ;
 ; Input pins : 0-7 = ui_in (data byte), 8 = uio_in[0] (start, level-triggered)
 ; Output pins: 0 = TX, 1 = BUSY
@@ -6,8 +6,8 @@
 ; uart_send is a subroutine (A = byte to send, A is destroyed) so other protocols can
 ; use the UART too: the I2C firmware calls it to print the byte it reads.
 ;
-; Cycle budget: every instruction takes 1 cycle, WAIT n takes 1+n.
-; Per data bit: SHR(1) + OUTC(1) + WAIT 430 (431) + DJNZ(1) = 434 cycles.
+; Timing: every instruction takes 1 slot (4 clocks), WAIT n takes 1+n slots.
+; Per data bit: SHR(1) + OUTC(1) + WAIT 104 (105) + DJNZ(1) = 108 slots.
 
 uart_start:
         PIN  0 1              ; TX idles high
@@ -22,13 +22,13 @@ uart_send:
         PIN  1 1              ; busy
         PIN  0 0              ; start bit
         LDX  8                ; 8 data bits
-        WAIT 430              ; PIN..OUTC spacing = 434 cycles
+        WAIT 104              ; PIN..OUTC spacing = 108 slots
 bit:    SHR                   ; C = next data bit (LSB first)
         OUTC 0                ; TX = C
-        WAIT 430
+        WAIT 104
         DJNZ bit
-        NOP                   ; pad: loop path runs SHR+OUTC (2 cycles), exit path PIN+NOP
+        NOP                   ; pad: loop path runs SHR+OUTC (2 slots), exit path PIN+NOP
         PIN  0 1              ; stop bit
-        WAIT 430
+        WAIT 104
         PIN  1 0              ; not busy
         RET

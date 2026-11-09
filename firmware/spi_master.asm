@@ -9,7 +9,8 @@
 ; the slave, so the second 8 bits send that byte straight back out on MOSI.
 ; This makes a built-in self-test: the slave sees [ui_in byte][its own byte echoed].
 ;
-; Per bit: SHL(1) OUTC(1) WAIT 6 (7) PIN(1) WAIT 6 (7) INB(1) PIN(1) DJNZ(1) = 20 cycles.
+; Per bit: SHL(1) OUTC(1) WAIT 2 (3) PIN(1) WAIT 2 (3) INB(1) PIN(1) DJNZ(1) = 12 slots = 48 clocks
+; (about 1 MHz SCK at 50 MHz).
 
 spi_start:
         PIN  0 1              ; CS_N idle high
@@ -20,18 +21,18 @@ spi_idle:
         IN                    ; A = byte to send
         PIN  3 1              ; busy
         PIN  0 0              ; assert CS_N
-        WAIT 6                ; CS setup time
+        WAIT 2                ; CS setup time
         LDX  16               ; 16 bits
 spi_bit:
         SHL                   ; C = next MSB to send
         OUTC 2                ; MOSI = C (SCK is low)
-        WAIT 6
+        WAIT 2
         PIN  1 1              ; SCK rising edge: slave samples MOSI
-        WAIT 6
+        WAIT 2
         INB  9                ; A[0] = MISO (stable by end of SCK high phase)
         PIN  1 0              ; SCK falling edge: slave shifts MISO
         DJNZ spi_bit
-        WAIT 6                ; CS hold time
+        WAIT 2                ; CS hold time
         PIN  0 1              ; deassert CS_N
         PIN  2 0              ; MOSI low
 spi_rel:

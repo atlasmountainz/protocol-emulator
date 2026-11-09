@@ -22,7 +22,8 @@ from isa_model import gen_program, write_hex  # noqa: E402
 
 REQUIRED = ["PIN", "OUT", "WAIT", "JMP", "JPIN1_taken", "JPIN1_fall", "JPIN0_taken", "JPIN0_fall",
             "LDA", "SHR", "OUTC", "LDX", "DJNZ_taken", "DJNZ_exit", "IN", "SHL", "INB", "CALL",
-            "RET", "ODRV", "ODRVC", "NOP", "HALT"]
+            "RET", "ODRV", "ODRVC", "NOP", "HALT", "SEND_ok", "SEND_block", "RECV_ok", "RECV_block",
+            "SPAWN_start", "SPAWN_self", "SPAWN_ignored"]
 
 
 def main():

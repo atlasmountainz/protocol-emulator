@@ -32,6 +32,9 @@ OPS = {
     "RET":  (0xF, []),                      # pop return address, jump
     "ODRV": (0xF, ["pin", "val"]),          # open-drain pin: val=0 pull low, val=1 release
     "ODRVC": (0xF, ["pin"]),                # open-drain pin: pull low if C=0, release if C=1
+    "SEND": (0xF, []),                      # channel: send A (blocks while the channel is full)
+    "RECV": (0xF, []),                      # channel: A = received byte (blocks while empty)
+    "SPAWN": (0xF, ["thread", "addr"]),     # start thread 1..3 at addr
 }
 
 
@@ -88,6 +91,13 @@ def encode(mn, args, labels, lineno):
     elif mn == "ODRVC":
         rng("pin", 7)
         w |= (0x3 << 8) | v["pin"]
+    elif mn == "SEND":
+        w |= 0x5 << 8
+    elif mn == "RECV":
+        w |= 0x6 << 8
+    elif mn == "SPAWN":
+        rng("thread", 3); rng("addr", ROM_DEPTH - 1)
+        w |= ((0x8 + v["thread"]) << 8) | v["addr"]
     return w
 
 

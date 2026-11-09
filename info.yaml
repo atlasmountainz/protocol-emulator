@@ -1,9 +1,9 @@
 # Tiny Tapeout project information
 project:
-  title:        "Protocol emulator CPU (UART + SPI + I2C firmware)"      # Project title
+  title:        "Protocol emulator: four-thread barrel I/O processor"      # Project title
   author:       "atlasmountainz"      # Your name
   discord:      ""      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Programmable protocol emulator ASIC - tiny cycle-exact CPU running UART, SPI or I2C firmware from ROM"      # One line description of what your project does
+  description:  "Programmable protocol emulator ASIC - deterministic four-thread I/O processor; UART, SPI, I2C (with a concurrent SCL timing monitor) and full-duplex UART echo firmware"      # One line description of what your project does
   language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     50000000  # 50 MHz: the UART and I2C firmware timing assume this clock
 
@@ -27,7 +27,7 @@ project:
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
   # Inputs
-  ui[0]: "DATA0"
+  ui[0]: "DATA0 / ECHO_RX"
   ui[1]: "DATA1"
   ui[2]: "DATA2"
   ui[3]: "DATA3"
@@ -37,12 +37,12 @@ pinout:
   ui[7]: "DATA7"
 
   # Outputs
-  uo[0]: "UART_TX / SPI_CS_N"
+  uo[0]: "UART_TX / SPI_CS_N / ECHO_TX"
   uo[1]: "UART_BUSY / SPI_SCK"
   uo[2]: "SPI_MOSI"
   uo[3]: "SPI_BUSY / I2C_BUSY"
   uo[4]: "I2C_ERR (slave NACK)"
-  uo[5]: ""
+  uo[5]: "I2C_SCL_VIOL (SCL timing monitor)"
   uo[6]: ""
   uo[7]: ""
 
@@ -53,8 +53,8 @@ pinout:
   uio[3]: "I2C_SDA (open-drain)"
   uio[4]: "LOAD_STROBE (program loader)"
   uio[5]: "LOAD (1 = load program memory)"
-  uio[6]: "MODE_I2C (1=I2C)"
-  uio[7]: "MODE_SPI (1=SPI)"
+  uio[6]: "MODE_I2C (1=I2C, both mode pins = echo)"
+  uio[7]: "MODE_SPI (1=SPI, both mode pins = echo)"
 
 # Do not change!
 yaml_version: 6
