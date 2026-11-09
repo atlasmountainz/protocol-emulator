@@ -1,7 +1,7 @@
 # Hardware build results
 
 From the LibreLane build in CI (`gds` workflow) of the full four-thread design: CPU, 256-word ROM with the
-built-in firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5L, 6x4 tiles, 20 ns clock
+built-in firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5L, 20 ns clock
 (50 MHz).
 
 | | |
@@ -9,7 +9,7 @@ built-in firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5
 | Standard cells (excluding fill and antenna diodes) | about 18,100 |
 | of which flip-flops | 2,561 (mostly the program memory; the four threads' state is about 250 of them) |
 | Standard-cell area (excluding fill) | about 301,600 µm² |
-| Core area available (6x4 tiles) | 902,417 µm² (about 33% used) |
+| Core area available at the 6x4 build below | 902,417 µm² (about 33% used); the project is now set to 8x4 (see the note at the end) |
 | Setup timing at 20 ns | no violations in any corner (nom_slow 1.08 V 125 C, nom_typ, nom_fast) |
 | Hold timing | no violations in any corner |
 | Antenna, LVS, DRC, precheck | pass |
@@ -29,3 +29,9 @@ copies), so each copy drives a single bit slice. The change does not alter any i
 Other options that were tried: a 64-word memory (met 20 ns), a slower 25 to 30 ns clock (met timing), and
 fetching both candidate next instructions in the same cycle (kept the 128 words but the layout tools did
 not finish within the CI time limit).
+
+## Tile size
+
+The numbers above are from the 6x4 build. Jane Street confirmed 8x4 (32 tiles) for the March 2027 shuttle, so
+`info.yaml` now says 8x4. The same design occupies roughly a quarter of the larger area; the 8x4 re-run of the
+flow is recorded below once it has finished.
