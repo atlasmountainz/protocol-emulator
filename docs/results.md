@@ -1,21 +1,22 @@
 # Hardware build results
 
-**These numbers are for the earlier single-thread version of the core (same memory system). The four-thread
-version is being re-run through the same flow; this page is updated when it has finished.**
-
-From the LibreLane build in CI (`gds` workflow) of the full design: CPU, 256-word ROM with the built-in
-firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5L, 6x4 tiles, 20 ns clock (50 MHz).
+From the LibreLane build in CI (`gds` workflow) of the full four-thread design: CPU, 256-word ROM with the
+built-in firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5L, 6x4 tiles, 20 ns clock
+(50 MHz).
 
 | | |
 |---|---|
-| Standard cells (excluding fill) | 16,051 |
-| of which flip-flops | 2,313 (mostly the program memory) |
-| Standard-cell area (excluding fill) | about 272,000 µm² |
-| Core area available (6x4 tiles) | 902,417 µm² (about 30% used) |
-| Setup timing, worst corner (1.08 V, 125 C) | +2.34 ns slack, no violations in any corner |
-| Hold timing | +0.13 ns worst slack, no violations |
+| Standard cells (excluding fill and antenna diodes) | about 18,100 |
+| of which flip-flops | 2,561 (mostly the program memory; the four threads' state is about 250 of them) |
+| Standard-cell area (excluding fill) | about 301,600 µm² |
+| Core area available (6x4 tiles) | 902,417 µm² (about 33% used) |
+| Setup timing at 20 ns | no violations in any corner (nom_slow 1.08 V 125 C, nom_typ, nom_fast) |
+| Hold timing | no violations in any corner |
 | Antenna, LVS, DRC, precheck | pass |
-| Gate-level simulation (the full cocotb suite on the synthesized netlist) | pass |
+| Gate-level simulation (the full 17-test cocotb suite on the synthesized netlist) | 17/17 pass |
+
+The four-thread core costs only about 30,000 µm² (11%) more than the single-thread core it replaced
+(16,051 cells, about 272,000 µm²), because the per-thread state is small next to the program memory.
 
 ## What limited the clock
 
