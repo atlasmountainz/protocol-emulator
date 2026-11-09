@@ -4,9 +4,9 @@
 Usage: load_image.py OUT_PREFIX IN1.asm [IN2.asm ...]
 
 Assembles the sources like tools/asm.py (labels are global across files), checks that the
-program fits in the 128-word program memory, pads it with HALT, and writes
-  OUT_PREFIX.bin   256 bytes, in the order the chip expects them (low byte of each word first)
-  OUT_PREFIX.hex   128 lines of 16-bit hex words, for $readmemh and for inspection
+program fits in the 256-word program memory, pads it with HALT, and writes
+  OUT_PREFIX.bin   512 bytes, in the order the chip expects them (low byte of each word first)
+  OUT_PREFIX.hex   256 lines of 16-bit hex words, for $readmemh and for inspection
 See docs/loading.md for how to send the bytes to the chip.
 """
 import sys
@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import asm  # noqa: E402
 
-RAM_WORDS = 128
+RAM_WORDS = 256
 HALT_WORD = 0xF000
 
 

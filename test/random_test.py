@@ -16,8 +16,8 @@ from isa_model import Model, STATE_NAMES
 from loader import load_program, LOAD, STROBE, RAM_WORDS
 
 CYCLES = int(os.environ.get("RAND_CYCLES", "6000"))
-# LOAD_RAM=1: send the first 128 words over the pins into the program memory and run from there
-# (words 128-255 read as HALT). Otherwise the program is in the simulation-only ROM.
+# LOAD_RAM=1: send all 256 words over the pins into the program memory and run from there
+# Otherwise the program is in the simulation-only ROM.
 LOAD_RAM = os.environ.get("LOAD_RAM") == "1"
 
 

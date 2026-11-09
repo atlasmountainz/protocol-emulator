@@ -53,8 +53,8 @@ Programs that rely on that (see `firmware/echo.asm`) get synchronisation for fre
 
 ## Instructions
 
-16-bit instructions, 8-bit program counter (256 words). The ROM has 256 words and the loadable
-program memory 128 (see `docs/loading.md`). Unused addresses read as `HALT`.
+16-bit instructions, 8-bit program counter (256 words). The ROM has 256 words and so has the loadable
+program memory (see `docs/loading.md`). Unused ROM addresses read as `HALT`.
 
 | Op  | Mnemonic        | Encoding                       | Effect |
 |-----|-----------------|--------------------------------|--------|

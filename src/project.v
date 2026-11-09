@@ -6,7 +6,7 @@
 `default_nettype none
 
 // Programmable protocol emulator: a tiny cycle-exact CPU running firmware from ROM, or from a
-// 128-word program memory that the host loads over the pins after fabrication.
+// 256-word program memory that the host loads over the pins after fabrication.
 //   Input pins  0-7  = ui_in[7:0]
 //   Input pins  8-15 = uio_in[7:0]
 //   Output pins 0-7  = uo_out[7:0]          (push-pull)
@@ -41,7 +41,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   end
 
   wire [7:0]  rom_addr;
-  wire [111:0] rom_addr_rep;
+  wire [127:0] rom_addr_rep;
   wire [15:0] rom_data;
   wire [15:0] ram_data;
   wire [7:0]  od_pull;
@@ -52,7 +52,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   wire [7:0] ld_byte = sync2[7:0];  // ui[7:0]
 
   reg        strobe_d;
-  reg  [7:0] ld_ptr;                // byte index: bit 0 selects low/high byte
+  reg  [8:0] ld_ptr;                // byte index: bit 0 selects low/high byte
   reg  [7:0] ld_lo;
   reg        use_ram;               // set once LOAD has been seen since reset
 
@@ -62,15 +62,15 @@ module tt_um_atlasmountainz_protocol_emulator (
   always @(posedge clk) begin
     if (!rst_n) begin
       strobe_d <= 1'b0;
-      ld_ptr   <= 8'd0;
+      ld_ptr   <= 9'd0;
       ld_lo    <= 8'd0;
       use_ram  <= 1'b0;
     end else begin
       strobe_d <= strobe;
       if (load_en) use_ram <= 1'b1;
-      if (!load_en) ld_ptr <= 8'd0;
+      if (!load_en) ld_ptr <= 9'd0;
       else if (wr_pulse) begin
-        ld_ptr <= ld_ptr + 8'd1;
+        ld_ptr <= ld_ptr + 9'd1;
         if (!ld_ptr[0]) ld_lo <= ld_byte;
       end
     end
@@ -79,7 +79,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   pmem u_pmem (
       .clk  (clk),
       .we   (ram_we),
-      .waddr(ld_ptr[7:1]),
+      .waddr(ld_ptr[8:1]),
       .wdata({ld_byte, ld_lo}),
       .raddr(rom_addr),
       .raddr_rep(rom_addr_rep),
