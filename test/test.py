@@ -24,16 +24,10 @@ FW_DIR = Path(__file__).resolve().parent.parent / "firmware"
 
 
 def firmware_image(uio):
-    """The ROM holds every protocol (154 words) but the program memory holds 128, so in FROM_RAM mode
-    load just the protocol that the mode pins select, behind a one-word jump to its entry point."""
-    pins = (uio >> 6) & 3
-    entry, files = {0: ("uart_start", ["uart_tx"]),
-                    1: ("i2c_start_fw", ["i2c_master", "i2c_monitor", "uart_tx"]),
-                    2: ("spi_start", ["spi_master"]),
-                    3: ("echo_start", ["echo"])}[pins]
-    text = f"JMP {entry}\n" + "\n".join((FW_DIR / f"{f}.asm").read_text() for f in files)
-    words, _ = asm.assemble(text)
-    return words + [0xF000] * (128 - len(words))
+    """The whole built-in firmware (everything in rom.v), as an image for the program memory."""
+    names = ["main", "uart_tx", "spi_master", "i2c_master", "i2c_monitor", "echo"]   # as tools/build_rom.sh
+    words, _ = asm.assemble("\n".join((FW_DIR / f"{f}.asm").read_text() for f in names))
+    return words + [0xF000] * (256 - len(words))
 
 
 async def reset(dut, mode=0, uio=None, ui=0):
@@ -485,7 +479,7 @@ async def release_load(dut, uio=0, ui=0):
 
 def assemble_words(text):
     words, _ = asm.assemble(text)
-    return words + [0xF000] * (128 - len(words))
+    return words + [0xF000] * (256 - len(words))
 
 
 @cocotb.test()

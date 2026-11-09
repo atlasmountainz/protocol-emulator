@@ -6,7 +6,7 @@ from cocotb.triggers import ClockCycles
 
 LOAD = 0x20    # uio[5]
 STROBE = 0x10  # uio[4]
-RAM_WORDS = 128
+RAM_WORDS = 256
 
 
 async def load_program(dut, words, rng=None):

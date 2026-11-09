@@ -24,8 +24,19 @@ module cpu #(
     output reg  [7:0]  pins_out,   // push-pull output pins
     output reg  [7:0]  od_pull,    // open-drain pins: 1 = pull the line low, 0 = released
     output wire [7:0]  rom_addr,   // fetch address
-    output wire [111:0] rom_addr_rep, // 16 copies of rom_addr[6:0], one per instruction bit
+    output wire [127:0] rom_addr_rep, // 16 copies of rom_addr, one per instruction bit
     input  wire [15:0] rom_data    // instruction at rom_addr
+`ifdef FORMAL
+    ,  // observation ports for the formal proofs (formal/); not present in the chip
+    output wire [31:0]  f_pc, f_a, f_x,
+    output wire [3:0]   f_c, f_act,
+    output wire [47:0]  f_wait,
+    output wire [7:0]   f_sp, f_fa,
+    output wire [127:0] f_stack,
+    output wire [15:0]  f_ir,
+    output wire [1:0]   f_slot, f_ethr,
+    output wire         f_evalid, f_mb_full
+`endif
 );
 
   // JPIN's pin-state is part of the opcode (0x5 = jump if pin high, 0x0 = jump if pin low),
@@ -93,8 +104,8 @@ module cpu #(
       pc_rep u_rep (
           .clk  (clk),
           .rst_n(rst_n),
-          .d    (fa_next[6:0]),
-          .q    (rom_addr_rep[7*g+:7])
+          .d    (fa_next),
+          .q    (rom_addr_rep[8*g+:8])
       );
     end
   endgenerate
@@ -215,4 +226,11 @@ module cpu #(
       end
     end
   end
+
+`ifdef FORMAL
+  assign f_pc = pc_q;  assign f_a = a_q;  assign f_x = x_q;  assign f_c = c_q;
+  assign f_act = act_q;  assign f_wait = wait_q;  assign f_sp = sp_q;  assign f_fa = fa;
+  assign f_stack = stack_q;  assign f_ir = ir;  assign f_slot = slot;  assign f_ethr = e_thr;
+  assign f_evalid = e_valid;  assign f_mb_full = mb_full;
+`endif
 endmodule

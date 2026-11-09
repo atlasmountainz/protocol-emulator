@@ -3,7 +3,7 @@
 The chip runs one of two programs:
 
 - **the built-in ROM firmware** (UART, SPI, I2C or UART echo, picked by the mode pins), or
-- **a program the host loads into the 128-word program memory**, which replaces the ROM completely.
+- **a program the host loads into the 256-word program memory**, which replaces the ROM completely.
 
 ## Pins
 
@@ -19,7 +19,7 @@ The chip runs one of two programs:
 2. Raise LOAD.
 3. For each byte of the image, in order: set `ui[7:0]`, then raise STROBE, then lower STROBE. Words are
    sent **low byte first**, so word 0 is bytes 0 and 1, word 1 is bytes 2 and 3, and so on. The image is
-   128 words = 256 bytes. The byte pointer wraps after 256 bytes.
+   256 words = 512 bytes. The byte pointer wraps after 512 bytes.
 4. Lower LOAD (set the mode/start pins to the values the program expects at the same time). The CPU
    starts at address 0 about three clocks later.
 
@@ -38,18 +38,18 @@ longer does not write twice.
 
 ## Program memory
 
-- 128 words of 16 bits. Addresses 128 to 255 read as `HALT`, so a program that runs off the end stops.
-- The memory has no reset. After power-up its contents are undefined, so always send the full 256 bytes.
-  `tools/load_image.py` pads the image with `HALT` up to 128 words.
+- 256 words of 16 bits, the same size as the ROM and the whole 8-bit program counter range.
+- The memory has no reset. After power-up its contents are undefined, so always send the full 512 bytes.
+  `tools/load_image.py` pads the image with `HALT` up to 256 words, so a program that runs off its end stops.
 - Everything else (instructions, pins, timing, all four threads) behaves as in `docs/isa.md`. Firmware assembled for
-  the ROM can be loaded unchanged, as long as it fits in 128 words. The whole ROM image (158 words) does not,
-  so the tests load one protocol at a time (see `test/test.py`, `firmware_image`).
+  the ROM can be loaded unchanged: the whole ROM image (158 words) is loaded in one piece by the tests
+  (`FROM_RAM=1`, see `test/test.py`, `firmware_image`) and behaves identically.
 
 ## Building an image
 
 ```
 python3 tools/load_image.py build/image firmware/main.asm firmware/uart_tx.asm
-# -> build/image.bin (256 bytes, in transmission order) and build/image.hex (128 words)
+# -> build/image.bin (512 bytes, in transmission order) and build/image.hex (256 words)
 ```
 
 The testbench side of this protocol is `test/loader.py`. The whole directed test suite also runs with the

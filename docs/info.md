@@ -39,9 +39,9 @@ Same silicon, four protocols, chosen by firmware. The original fixed-logic UART
 
 ## Loading your own firmware
 
-The ROM firmware above is only the default. The chip also has a 128-word program memory that the host
+The ROM firmware above is only the default. The chip also has a 256-word program memory that the host
 fills over the pins, so a new protocol is a new program, not a new chip. Raise `uio[5]` (LOAD), put each
-byte on `ui[7:0]` and pulse `uio[4]` (STROBE), low byte of each 16-bit word first, 256 bytes in all, then
+byte on `ui[7:0]` and pulse `uio[4]` (STROBE), low byte of each 16-bit word first, 512 bytes in all, then
 lower LOAD and the CPU starts the new program at address 0. A reset without LOAD brings back the ROM
 firmware. Details and timing are in `docs/loading.md`; `tools/load_image.py` builds the image from
 assembly source.
