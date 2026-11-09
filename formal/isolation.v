@@ -26,17 +26,22 @@ module isolation #(
 ) (
     input wire        clk,
     input wire        rst_n,
-    input wire [15:0] pins_in,
-    input wire        keep_mem        // never set (assumed 0); only stops tools from folding rom into a constant ROM
+    input wire [15:0] pins_in
 );
-  // The program memory: unconstrained contents, constant over time, shared by both copies.
-  reg [15:0] rom[0:255];
-  always @(posedge clk) if (keep_mem) rom[0] <= 16'd0;
+  // The program memory: 256 words, each an arbitrary value that never changes ($anyconst).
+  wire [4095:0] rom_flat;
+  genvar gi;
+  generate
+    for (gi = 0; gi < 256; gi = gi + 1) begin : g_rom
+      (* anyconst *) wire [15:0] w;
+      assign rom_flat[16*gi +: 16] = w;
+    end
+  endgenerate
 
   wire [7:0]  fa_a, fa_b;
   wire [7:0]  rom_addr_a, rom_addr_b;
-  wire [15:0] rom_data_a = rom[rom_addr_a];
-  wire [15:0] rom_data_b = rom[rom_addr_b];
+  wire [15:0] rom_data_a = rom_flat[16*(rom_addr_a) +: 16];
+  wire [15:0] rom_data_b = rom_flat[16*(rom_addr_b) +: 16];
   wire [7:0]  po_a, po_b, od_a, od_b;
 
   wire [31:0] pc_a, a_a, x_a, pc_b, a_b, x_b;
@@ -76,7 +81,7 @@ module isolation #(
     input [15:0] ir;
     input [1:0]  slot, ethr;
     input        ev;
-    input [15:0] romword;       // rom[pc of the thread being executed]
+    input [15:0] romword;       // the program word at the PC of that thread
     begin
       inv = (!ev || ethr == slot - 2'd1)                     // I1: executes the thread fetched last clock
             && (fa == pc[8*slot+:8])                         // I2: fetch address is that thread's PC
@@ -84,8 +89,8 @@ module isolation #(
     end
   endfunction
 
-  wire inv_a = inv(pc_a, fa_a, ir_a, slot_a, ethr_a, ev_a, rom[pc_a[8*ethr_a+:8]]);
-  wire inv_b = inv(pc_b, fa_b, ir_b, slot_b, ethr_b, ev_b, rom[pc_b[8*ethr_b+:8]]);
+  wire inv_a = inv(pc_a, fa_a, ir_a, slot_a, ethr_a, ev_a, rom_flat[16*(pc_a[8*ethr_a+:8]) +: 16]);
+  wire inv_b = inv(pc_b, fa_b, ir_b, slot_b, ethr_b, ev_b, rom_flat[16*(pc_b[8*ethr_b+:8]) +: 16]);
 
   // ---- the relation that must hold forever ---------------------------------------------------
   wire t_same = tpc_a == tpc_b && ta_a == ta_b && tx_a == tx_b && tc_a == tc_b && tw_a == tw_b &&
@@ -114,7 +119,6 @@ module isolation #(
     if (first) assume (rel);                                  // start anywhere that satisfies rel
     assume (!(run_a && bad_ir(ir_a, ethr_a == T)));
     assume (!(run_b && bad_ir(ir_b, ethr_b == T)));
-    assume (!keep_mem);
     assert (rel);
   end
 endmodule

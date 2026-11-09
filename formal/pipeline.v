@@ -15,13 +15,19 @@
 module pipeline (
     input wire        clk,
     input wire        rst_n,
-    input wire [15:0] pins_in,
-    input wire        keep_mem        // never set (assumed 0); only stops tools from folding rom into a constant ROM
+    input wire [15:0] pins_in
 );
-  reg [15:0] rom[0:255];
-  always @(posedge clk) if (keep_mem) rom[0] <= 16'd0;
+  // The program memory: 256 words, each an arbitrary value that never changes ($anyconst).
+  wire [4095:0] rom_flat;
+  genvar gi;
+  generate
+    for (gi = 0; gi < 256; gi = gi + 1) begin : g_rom
+      (* anyconst *) wire [15:0] w;
+      assign rom_flat[16*gi +: 16] = w;
+    end
+  endgenerate
   wire [7:0]  rom_addr;
-  wire [15:0] rom_data = rom[rom_addr];
+  wire [15:0] rom_data = rom_flat[16*(rom_addr) +: 16];
   wire [7:0]  po, od;
   wire [31:0] pc, a, x;
   wire [3:0]  c, act;
@@ -48,13 +54,12 @@ module pipeline (
   end
 
   always @* begin
-    assume (!keep_mem);
     if (first) assume (!rst_n);                               // the chip starts in reset
     // (state at step 0 is arbitrary until the first clock edge applies the reset)
     if (!first) begin
       assert (!ev || ethr == slot - 2'd1);                    // I1
       assert (fa == pc[8*slot+:8]);                           // I2
-      assert (!ev || ir == rom[pc[8*ethr+:8]]);               // I3
+      assert (!ev || ir == rom_flat[16*(pc[8*ethr+:8]) +: 16]);               // I3
       if (slot_prev_ok) assert (slot == slot_prev + 2'd1);    // I4
     end
   end
