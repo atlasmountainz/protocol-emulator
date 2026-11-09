@@ -81,9 +81,17 @@ async def test_random_program(dut):
         model.clock((uio << 8) | ui)
         await Timer(1, unit="ns")              # let the post-edge state settle
 
-        got = (int(cpu.pc.value), int(cpu.a.value), int(cpu.x.value), int(cpu.c.value),
-               int(cpu.wait_cnt.value), int(cpu.halted.value), int(cpu.sp.value),
-               int(dut.uo_out.value), int(dut.uio_oe.value))
+        got = []
+        for th in range(4):
+            got += [(int(cpu.pc_q.value) >> (8 * th)) & 0xFF,
+                    (int(cpu.a_q.value) >> (8 * th)) & 0xFF,
+                    (int(cpu.x_q.value) >> (8 * th)) & 0xFF,
+                    (int(cpu.c_q.value) >> th) & 1,
+                    (int(cpu.wait_q.value) >> (12 * th)) & 0xFFF,
+                    (int(cpu.act_q.value) >> th) & 1,
+                    (int(cpu.sp_q.value) >> (2 * th)) & 3]
+        got = tuple(got) + (int(dut.uo_out.value), int(dut.uio_oe.value), int(cpu.mb.value),
+                            int(cpu.mb_full.value))
         exp = model.state()
         if got != exp:
             diff = ", ".join(f"{n}: rtl={g:#x} model={e:#x}"

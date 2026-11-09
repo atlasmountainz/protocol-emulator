@@ -1,5 +1,8 @@
 # Hardware build results
 
+**These numbers are for the earlier single-thread version of the core (same memory system). The four-thread
+version is being re-run through the same flow; this page is updated when it has finished.**
+
 From the LibreLane build in CI (`gds` workflow) of the full design: CPU, 256-word ROM with the built-in
 firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5L, 6x4 tiles, 20 ns clock (50 MHz).
 

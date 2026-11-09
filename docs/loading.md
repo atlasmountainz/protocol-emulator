@@ -2,7 +2,7 @@
 
 The chip runs one of two programs:
 
-- **the built-in ROM firmware** (UART, SPI or I2C, picked by the mode pins), or
+- **the built-in ROM firmware** (UART, SPI, I2C or UART echo, picked by the mode pins), or
 - **a program the host loads into the 128-word program memory**, which replaces the ROM completely.
 
 ## Pins
@@ -41,8 +41,9 @@ longer does not write twice.
 - 128 words of 16 bits. Addresses 128 to 255 read as `HALT`, so a program that runs off the end stops.
 - The memory has no reset. After power-up its contents are undefined, so always send the full 256 bytes.
   `tools/load_image.py` pads the image with `HALT` up to 128 words.
-- Everything else (instructions, pins, timing) behaves as in `docs/isa.md`. Firmware assembled for the
-  ROM can be loaded unchanged.
+- Everything else (instructions, pins, timing, all four threads) behaves as in `docs/isa.md`. Firmware assembled for
+  the ROM can be loaded unchanged, as long as it fits in 128 words. The whole ROM image (158 words) does not,
+  so the tests load one protocol at a time (see `test/test.py`, `firmware_image`).
 
 ## Building an image
 
@@ -56,7 +57,7 @@ firmware loaded this way (`cd test && FROM_RAM=1 make`) and gives identical resu
 
 ## Example: a protocol the chip was not built with
 
-`firmware/examples/uart_rx.asm` is a UART receiver (8N1, 115200 baud at 50 MHz). It is not in the ROM: the
+`firmware/examples/uart_rx.asm` is a UART receiver (8N1, 115200 baud at 50 MHz; 432 clocks per bit). It is not in the ROM: the
 testbench loads it into the program memory and receives bytes with it, including at +-3% baud-rate error.
 RX is `ui[0]`; the received byte appears on `uo[7:0]`, and `uio[7]` (open-drain) is pulled low while a byte
 is valid.

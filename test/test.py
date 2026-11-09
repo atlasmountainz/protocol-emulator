@@ -15,29 +15,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 import asm  # noqa: E402
 from load_image import build_image  # noqa: E402
 
-CLKS_PER_BIT = 434  # must match project.v
+CLKS_PER_BIT = 432  # 108 thread slots of 4 clocks; must match firmware/uart_tx.asm
 
 # FROM_RAM=1 make: run every test with the firmware loaded into the program memory over the
 # pins instead of running the built-in ROM. The results must be identical.
 FROM_RAM = os.environ.get("FROM_RAM") == "1"
-FIRMWARE = [str(Path(__file__).resolve().parent.parent / "firmware" / f)
-            for f in ("main.asm", "uart_tx.asm", "spi_master.asm", "i2c_master.asm")]
+FW_DIR = Path(__file__).resolve().parent.parent / "firmware"
 
 
-async def reset(dut, mode=0, uio=None):
+def firmware_image(uio):
+    """The ROM holds every protocol (154 words) but the program memory holds 128, so in FROM_RAM mode
+    load just the protocol that the mode pins select, behind a one-word jump to its entry point."""
+    pins = (uio >> 6) & 3
+    entry, files = {0: ("uart_start", ["uart_tx"]),
+                    1: ("i2c_start_fw", ["i2c_master", "i2c_monitor", "uart_tx"]),
+                    2: ("spi_start", ["spi_master"]),
+                    3: ("echo_start", ["echo"])}[pins]
+    text = f"JMP {entry}\n" + "\n".join((FW_DIR / f"{f}.asm").read_text() for f in files)
+    words, _ = asm.assemble(text)
+    return words + [0xF000] * (128 - len(words))
+
+
+async def reset(dut, mode=0, uio=None, ui=0):
     """Reset the chip. `mode` is the SPI select pin (uio_in[7]); `uio` overrides the whole
     uio_in value (the I2C mode pin is uio_in[6]). Neither set = UART."""
     dut.ena.value = 1
-    dut.ui_in.value = 0
+    dut.ui_in.value = ui
     dut.uio_in.value = (mode << 7) if uio is None else uio
     dut.rst_n.value = 0
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
     if FROM_RAM:
         start_uio = int(dut.uio_in.value)
-        await load_program(dut, build_image(FIRMWARE))
+        await load_program(dut, firmware_image(start_uio))
         dut.uio_in.value = start_uio
-    await ClockCycles(dut.clk, 2)
+        dut.ui_in.value = ui
+    # Boot: the dispatcher and the protocol's init take about ten slots (40 clocks) to reach the
+    # idle loop. The start input is level-triggered, so tests raise it after this.
+    await ClockCycles(dut.clk, 60)
 
 
 async def send_and_capture(dut, byte):
@@ -48,7 +63,7 @@ async def send_and_capture(dut, byte):
     dut.uio_in.value = 0
 
     # TX goes low (start bit) once the firmware has seen start
-    for _ in range(40):
+    for _ in range(200):
         await RisingEdge(dut.clk)
         if int(dut.uo_out.value) & 1 == 0:
             break
@@ -99,12 +114,13 @@ async def test_send_bytes(dut):
         else:
             raise AssertionError("busy never cleared after the stop bit")
         assert int(dut.uo_out.value) & 1 == 1, "TX must return to idle high"
+        await ClockCycles(dut.clk, 16)   # let the firmware get back to its idle loop (a few slots)
 
 
 @cocotb.test()
 async def test_cycle_exact_timing(dut):
     """The CPU must hit the baud rate exactly: every TX transition is a multiple of one
-    bit time apart. 0x55 toggles TX on every bit, so all 9 gaps must be exactly 434."""
+    bit time apart. 0x55 toggles TX on every bit, so all 9 gaps must be exactly 432."""
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     await reset(dut)
 
@@ -198,8 +214,8 @@ async def test_spi_master(dut):
         slave.start = 0
         slave.drive()
 
-        # 16 bits x 20 cycles plus setup/hold; wait for the transaction to finish
-        for _ in range(600):
+        # 16 bits x 12 slots (48 clocks) plus setup/hold; wait for the transaction to finish
+        for _ in range(1500):
             await RisingEdge(dut.clk)
             if slave.transactions:
                 break
@@ -491,6 +507,7 @@ async def test_load_custom_program(dut):
     """)
     await load_program(dut, prog1, rng)
     await release_load(dut)
+    await ClockCycles(dut.clk, 40)   # let the first instructions run (outputs start at 0x01)
     seen = set()
     for _ in range(100):
         await ClockCycles(dut.clk, 1)
@@ -591,10 +608,195 @@ async def test_example_uart_receiver(dut):
     await ClockCycles(dut.clk, 20)
     assert (int(dut.uio_oe.value) >> 7) & 1 == 0, "RX_VALID must be released before any byte"
 
-    for bit_clks, byte in [(434, 0x55), (434, 0xA3), (434, 0x00), (434, 0xFF), (434, 0x3C),
-                           (421, 0x96), (447, 0xC5), (421, 0x01), (447, 0x80)]:
+    for bit_clks, byte in [(432, 0x55), (432, 0xA3), (432, 0x00), (432, 0xFF), (432, 0x3C),
+                           (419, 0x96), (445, 0xC5), (419, 0x01), (445, 0x80)]:
         await uart_send_frame(dut, byte, bit_clks)
         await ClockCycles(dut.clk, bit_clks)  # stop bit (ui is still 1)
         assert int(dut.uo_out.value) == byte, f"got {int(dut.uo_out.value):#04x}, sent {byte:#04x}"
         assert (int(dut.uio_oe.value) >> 7) & 1 == 1, "RX_VALID must be asserted after a byte"
         await ClockCycles(dut.clk, bit_clks)  # idle between frames
+
+
+# ---- Threads: full-duplex UART echo --------------------------------------------------------
+
+ECHO_MODE = 0xC0   # uio_in[7:6] = 11
+
+
+async def watch_uart_tx(dut, frames, bit_clks=CLKS_PER_BIT):
+    """Decode UART frames on uo_out[0] forever. Appends (start_cycle, byte) to `frames`; checks the
+    stop bit. The sample points are the middle of each bit, as a real receiver would use."""
+    cycle = 0
+    prev = 1
+    while True:
+        await RisingEdge(dut.clk)
+        cycle += 1
+        cur = int(dut.uo_out.value) & 1
+        if prev == 1 and cur == 0:
+            start = cycle
+            await ClockCycles(dut.clk, bit_clks // 2)
+            cycle += bit_clks // 2
+            assert int(dut.uo_out.value) & 1 == 0, "start bit glitch"
+            value = 0
+            for i in range(8):
+                await ClockCycles(dut.clk, bit_clks)
+                cycle += bit_clks
+                value |= (int(dut.uo_out.value) & 1) << i
+            await ClockCycles(dut.clk, bit_clks)
+            cycle += bit_clks
+            assert int(dut.uo_out.value) & 1 == 1, "stop bit must be high"
+            frames.append((start, value))
+            cur = 1
+        prev = cur
+
+
+@cocotb.test()
+async def test_echo_full_duplex(dut):
+    """Two threads, one byte mailbox: bytes sent back to back (no idle time) come out of TX in the same
+    order while the next one is still being received. A sender that is 0.4 % fast must work too."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut, uio=ECHO_MODE, ui=1)
+    await ClockCycles(dut.clk, 20)
+    assert int(dut.uo_out.value) & 1 == 1, "TX must idle high"
+
+    for bit_clks, payload in ((432, [0x55, 0xA3, 0x00, 0xFF, 0x3C, 0x81, 0x7E, 0x01, 0x80, 0xC5]),
+                              (430, [0x12, 0x34, 0xFE, 0xDC, 0x00, 0xFF, 0xAA, 0x0F, 0xF0, 0x99,
+                                     0x42, 0x24])):
+        frames = []
+        mon = cocotb.start_soon(watch_uart_tx(dut, frames))
+        rx_end = []
+        t0 = 0
+        for byte in payload:
+            await uart_send_frame(dut, byte, bit_clks)
+            dut.ui_in.value = 1
+            rx_end.append(t0)
+            t0 += 10 * bit_clks
+        dut.ui_in.value = 1
+        await ClockCycles(dut.clk, 14 * 432)
+        mon.cancel()
+        got = [b for _, b in frames]
+        assert got == payload, f"echo mismatch at {bit_clks} clocks/bit: {got} != {payload}"
+        # Full duplex: the echo of byte n started before byte n+1 had finished arriving.
+        starts = [s for s, _ in frames]
+        gaps = [b - a for a, b in zip(starts, starts[1:])]
+        assert max(gaps) <= 10 * 432 + 2 and min(gaps) >= 10 * 430 - 4 * 10, f"TX cadence {gaps}"
+        dut._log.info(f"echo at {bit_clks} clks/bit: {len(got)} bytes back to back OK, TX frame gaps {gaps}")
+        await ClockCycles(dut.clk, 3 * 432)
+
+
+@cocotb.test()
+async def test_echo_idle_gaps(dut):
+    """Bytes with random idle gaps between them, including very long ones."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut, uio=ECHO_MODE, ui=1)
+    rng = random.Random(11)
+    frames = []
+    cocotb.start_soon(watch_uart_tx(dut, frames))
+    payload = [rng.randrange(256) for _ in range(12)]
+    for byte in payload:
+        await uart_send_frame(dut, byte, 432)
+        dut.ui_in.value = 1
+        await ClockCycles(dut.clk, rng.choice([0, 1, 50, 432, 3000, 6000]))
+    await ClockCycles(dut.clk, 12 * 432)
+    assert [b for _, b in frames] == payload
+
+
+# ---- Threads: I2C master + SCL timing monitor ----------------------------------------------
+
+MONITOR_IMAGE = None
+
+
+async def drive_scl(dut, phases):
+    """Drive uio_in[2] (SCL) through [(level, clocks), ...]."""
+    for level, clks in phases:
+        dut.uio_in.value = level << SCL
+        await ClockCycles(dut.clk, clks)
+
+
+async def monitor_case(dut, low, high):
+    """Load the monitor alone, give it one SCL low phase of `low` clocks followed by one high phase of
+    `high` clocks (each preceded and followed by long phases), and return SCL_VIOL."""
+    await reset(dut)
+    await load_program(dut, build_image([str(FW_DIR / "i2c_monitor.asm")]))
+    await release_load(dut, uio=1 << SCL)
+    await drive_scl(dut, [(1, 400), (0, low), (1, high), (0, 400), (1, 100)])
+    return (int(dut.uo_out.value) >> 5) & 1
+
+
+@cocotb.test()
+async def test_scl_monitor_thresholds(dut):
+    """The monitor thread on its own, on a bench-driven SCL: it must flag a clock that is too fast in
+    either phase, and never flag one that meets the standard-mode minimums (4.7 us low, 4.0 us high)."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    results = {}
+    for low, high, expect in [(240, 200, 0), (235, 200, 0), (232, 198, 0), (500, 300, 0),
+                              (2000, 5000, 0),
+                              (220, 400, 1), (200, 400, 1), (100, 400, 1), (24, 400, 1),
+                              (400, 190, 1), (400, 150, 1), (400, 60, 1), (400, 8, 1),
+                              (200, 150, 1)]:
+        got = await monitor_case(dut, low, high)
+        results[(low, high)] = got
+        assert got == expect, f"SCL low {low} clocks, high {high} clocks: SCL_VIOL={got}, expected {expect}"
+    # The flag is sticky and the reset clears it.
+    await reset(dut)
+    assert (int(dut.uo_out.value) >> 5) & 1 == 0
+
+
+@cocotb.test()
+async def test_i2c_monitor_quiet_on_good_traffic(dut):
+    """The master's own transaction, and a slave stretching the clock, never trip the monitor."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    for stretch in (0, 900):
+        await reset(dut, uio=I2C_IDLE_BUS)
+        bus = I2CEeprom(dut, {0x42: 0x99, 0x07: 0x5C}, stretch=stretch)
+        task = cocotb.start_soon(bus.run())
+        for ptr, val in ((0x42, 0x99), (0x07, 0x5C)):
+            got = await i2c_transaction(dut, bus, ptr)
+            await wait_idle(dut)
+            assert got == val
+            assert (int(dut.uo_out.value) >> 5) & 1 == 0, "monitor flagged a legal clock"
+        assert not bus.violations
+        task.cancel()
+
+
+@cocotb.test()
+async def test_i2c_monitor_catches_rogue_slave(dut):
+    """A slave that yanks SCL low 1.5 us after the master released it shortens the high phase below
+    4.0 us; the monitor thread must catch it while the master carries on obliviously."""
+    cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
+    await reset(dut, uio=I2C_IDLE_BUS)
+    bus = I2CEeprom(dut, {0x42: 0x99})
+    task = cocotb.start_soon(bus.run())
+    flagged = []
+
+    async def rogue():
+        # Wait for the first SCL rise after the START, pull SCL low for 20 clocks 75 clocks into it.
+        prev = 1
+        seen_low = False
+        while True:
+            await RisingEdge(dut.clk)
+            oe = int(dut.uio_oe.value)
+            master_scl_low = (oe >> SCL) & 1
+            if master_scl_low:
+                seen_low = True
+            if seen_low and prev == 1 and not master_scl_low:     # master released SCL
+                await ClockCycles(dut.clk, 75)
+                bus.rogue_low = True
+                await ClockCycles(dut.clk, 20)      # a short glitch, back up before the master looks
+                bus.rogue_low = False
+                return
+            prev = 0 if master_scl_low else 1
+
+    bus.rogue_low = False
+    orig_levels = bus.levels
+
+    def levels():
+        scl, sda = orig_levels()
+        return (0 if bus.rogue_low else scl), sda
+    bus.levels = levels
+    cocotb.start_soon(rogue())
+    try:
+        await i2c_transaction(dut, bus, 0x42)       # the clipped clock may well corrupt the transfer
+    except AssertionError:
+        pass
+    assert (int(dut.uo_out.value) >> 5) & 1 == 1, "monitor missed a 1.5 us SCL high phase"
+    task.cancel()
