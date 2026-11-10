@@ -20,9 +20,15 @@ the committed code; `docs/results.md` has the hardware results.
 - **Program loader:** custom program, ignored data without a strobe, reset returns to the ROM, partial load
   followed by a reload.
 
-`test/test_leds_keyboard_midi.py` has 7 more tests for the loadable examples (WS2812 waveform and pixel
-decode against the spec windows, PS/2 receive at 10 and 16.7 kHz with jitter and error frames, MIDI byte
-timing).
+The loadable examples (programs the host loads over the pins; see `docs/examples-*.md`) have their own test
+modules, each loading the program through the real pin loader and driving it with a protocol model that checks
+the timing windows:
+
+| Module | Tests | Covers |
+|---|---|---|
+| `test_leds_keyboard_midi.py` | 7 | WS2812 waveform and pixel decode against the spec windows; PS/2 receive at 10 and 16.7 kHz with jitter and error frames; MIDI byte timing |
+| `test_i2c_target.py` | 18 | I2C target (slave) at 100 and 400 kHz: ACK/NACK, repeated start, auto-increment, wrong address, back-to-back transactions; margin test at 588 kHz |
+| `test_onewire_jtag.py` | 10 | 1-Wire master with in-firmware CRC8 (good, corrupted and missing devices, stuck bus); JTAG master against a TAP model (1 to 5 devices in the chain, dead TDO) |
 
 ## 2. Random programs against an independent model
 
