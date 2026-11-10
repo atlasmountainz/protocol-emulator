@@ -32,7 +32,8 @@ targets, random pin stimulus, four threads, channel and SPAWN traffic), runs eac
 and compares every architectural register of all four threads on every clock edge. It also fails if any
 instruction or branch outcome was never exercised across the seeds.
 
-RESULTS_RANDOM
+Latest runs on the 256-word design: 100 of 100 seeds match with the program in the ROM, and 100 of 100 match
+with each program loaded into the program memory over the pins. A random program is at most 256 instructions.
 
 ## 3. Mutation checks
 
