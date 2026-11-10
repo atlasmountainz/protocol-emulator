@@ -34,7 +34,7 @@ case "$MODE" in
   iso[0-3]) iso ${MODE#iso} iso_t ;;      # one thread only (so the four can run in parallel)
   mutant)   # A deliberately broken CPU in which a thread's shift result depends on the NEXT thread's
             # program counter. Every one of these runs must report FAILED, otherwise the proof is vacuous.
-            sed "s/a_q\[8\*e +: 8\]   <= {1'b0, a_e\[7:1\]};/a_q[8*e +: 8]   <= {1'b0, a_e[7:1]} ^ {7'b0, pc_q[8*(e+2'd1)]};/" src/cpu.v > "$OUT/cpu_mutant.v"
+            sed "s/a_q\[8\*e +: 8\]   <= {1'b0, a_e\[7:1\]};/a_q[8*e +: 8]   <= {1'b0, a_e[7:1]} ^ {7'b0, pc_q[8*(e ^ 2'd1)]};/" src/cpu.v > "$OUT/cpu_mutant.v"
             cmp -s src/cpu.v "$OUT/cpu_mutant.v" && { echo "mutation did not apply"; exit 1; }
             CPU="$OUT/cpu_mutant.v"; BASE_ONLY=1
             for T in 0 1 2 3; do iso $T mut_t; done ;;
