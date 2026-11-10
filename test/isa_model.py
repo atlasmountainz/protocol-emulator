@@ -193,7 +193,7 @@ STATE_NAMES = tuple(f"{n}{t}" for t in range(4)
 def gen_program(seed):
     """Random assembly program. Every mnemonic is exercised; branch targets are random."""
     r = random.Random(seed)
-    n = r.randint(40, 256)
+    n = r.randint(40, 253)       # + 3 SPAWN lines must still fit in 256 words
 
     def addr():
         return r.randrange(n + 8)              # sometimes lands in the HALT-filled tail
