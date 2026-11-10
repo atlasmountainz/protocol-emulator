@@ -64,9 +64,11 @@ ports compiled in under `ifdef FORMAL`, so the chip's RTL is unchanged.
   three threads start in arbitrary, different states. The proof is that thread T then stays identical in both
   copies forever, including the clock cycle in which each of its instructions executes. The two excluded
   interaction points are the channel (thread T does not execute SEND or RECV) and SPAWN (no other thread
-  spawns T); everything else the other threads can do is covered. ISOLATION_RESULT
+  spawns T); everything else the other threads can do is covered. Result: proved for all
+  four threads (base case and induction step both pass; the relation is preserved by every clock step, so
+  the induction depth is 2).
 - **The proof can fail:** `formal/run.sh mutant` runs the same proof against a CPU deliberately changed so that
-  a thread's shift result depends on the next thread's program counter. All four runs report a counterexample.
+  a thread's shift result depends on the next thread's program counter. All four runs report a counterexample, in about a minute each.
   Before this check existed the proof was found to be vacuous (the program memory had been folded into a
   constant ROM), which is why the check is kept.
 
