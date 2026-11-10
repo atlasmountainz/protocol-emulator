@@ -19,9 +19,11 @@ and then stops; `uo[0]` idles high.
 * **No ALU and no data memory.** A thread has `A`, `X` and `C`. The only data-dependent branch is `JPIN` on a
   pin. To branch on a bit of `A`, the programs shift it into `C`, put `C` on an open-drain pad with `ODRVC`
   and branch on the pad read back (`JPIN 9+n`). To put a bit into `A` they use `INB` from a pad.
-  The scratch pads (`uio[1]`..`uio[3]`) are only ever driven by the chip, so they need no external part,
-  but nothing may pull them low from outside, and the read-back must be fast enough (a pad that is released
-  has to rise within a slot or two; with a plain pull-up or no connection that holds).
+  The scratch pads (`uio[1]`..`uio[3]`) are only ever driven by the chip, and nothing may pull them low from
+  outside. A released pad must read back high within a slot or two, so on real hardware each of the three
+  needs a pull-up resistor (about 10 kOhm to 3.3 V); the testbench models that pull-up. Without it, a floating
+  pad gives undefined read-back and these two programs would not run correctly. This was checked in simulation
+  only.
 * **No XOR, no add.** The CRC is a shift register where the feedback is applied by rotating the register
   through a pad one bit at a time (`SHL`, `ODRVC`, `INB`). The JTAG chain-length counter is a binary counter
   kept bit-reversed, incremented the same way.

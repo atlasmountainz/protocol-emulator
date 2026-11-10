@@ -1,22 +1,23 @@
 # Hardware build results
 
 From the LibreLane build in CI (`gds` workflow) of the full four-thread design: CPU, 256-word ROM with the
-built-in firmware, 128-word loadable program memory and loader. IHP 130 nm CMOS5L, 20 ns clock
-(50 MHz).
+built-in firmware, 256-word loadable program memory and loader. IHP 130 nm CMOS5L, 8x4 tiles (the size
+confirmed for the March 2027 shuttle), 20 ns clock (50 MHz).
 
 | | |
 |---|---|
-| Standard cells (excluding fill and antenna diodes) | about 18,100 |
-| of which flip-flops | 2,561 (mostly the program memory; the four threads' state is about 250 of them) |
-| Standard-cell area (excluding fill) | about 301,600 µm² |
-| Core area available at the 6x4 build below | 902,417 µm² (about 33% used); the project is now set to 8x4 (see the note at the end) |
+| Standard cells (excluding fill and antenna diodes) | 31,911 |
+| of which flip-flops | 4,625 (about 4,100 are the loadable program memory; the four threads' state is about 250) |
+| Standard-cell area (excluding fill) | 539,613 µm² |
+| Core area (8x4 tiles) | about 1,208,000 µm², so about 45 % used |
 | Setup timing at 20 ns | no violations in any corner (nom_slow 1.08 V 125 C, nom_typ, nom_fast) |
 | Hold timing | no violations in any corner |
 | Antenna, LVS, DRC, precheck | pass |
 | Gate-level simulation (the full 17-test cocotb suite on the synthesized netlist) | 17/17 pass |
 
-The four-thread core costs only about 30,000 µm² (11%) more than the single-thread core it replaced
-(16,051 cells, about 272,000 µm²), because the per-thread state is small next to the program memory.
+For comparison, the earlier single-thread design with a 128-word program memory was 16,051 cells and about
+272,000 µm² (6x4 tiles). Doubling the loadable memory to 256 words accounts for most of the growth; the
+per-thread state of the four-thread core is small next to the program memory.
 
 ## What limited the clock
 
@@ -30,8 +31,8 @@ Other options that were tried: a 64-word memory (met 20 ns), a slower 25 to 30 n
 fetching both candidate next instructions in the same cycle (kept the 128 words but the layout tools did
 not finish within the CI time limit).
 
-## Tile size
+## Earlier build, for reference
 
-The numbers above are from the 6x4 build. Jane Street confirmed 8x4 (32 tiles) for the March 2027 shuttle, so
-`info.yaml` now says 8x4. The same design occupies roughly a quarter of the larger area; the 8x4 re-run of the
-flow is recorded below once it has finished.
+Before the move to 8x4 and the 256-word memory, the same four-thread core built at 6x4 with a 128-word loadable
+memory: about 18,100 cells, 2,561 flip-flops and 301,600 µm² (about 33 % of that smaller area), also with no
+setup or hold violations at 20 ns.

@@ -28,6 +28,7 @@ the timing windows:
 |---|---|---|
 | `test_leds_keyboard_midi.py` | 7 | WS2812 waveform and pixel decode against the spec windows; PS/2 receive at 10 and 16.7 kHz with jitter and error frames; MIDI byte timing |
 | `test_i2c_target.py` | 18 | I2C target (slave) at 100 and 400 kHz: ACK/NACK, repeated start, auto-increment, wrong address, back-to-back transactions; margin test at 588 kHz |
+| `test_spi_target.py` | 10 | SPI target (slave) in modes 0 and 3: ID, table read with auto-increment, status counter, CS re-framing at any bit, clock duty cycle, minimum CS timing, 60 random frames per mode; rates from 250 kHz to 1.35 MHz |
 | `test_onewire_jtag.py` | 10 | 1-Wire master with in-firmware CRC8 (good, corrupted and missing devices, stuck bus); JTAG master against a TAP model (1 to 5 devices in the chain, dead TDO) |
 
 ## 2. Random programs against an independent model
