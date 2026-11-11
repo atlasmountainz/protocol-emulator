@@ -95,7 +95,9 @@ ports compiled in under `ifdef FORMAL`, so the chip's RTL is unchanged.
 ## 5. Hardware flow checks (CI)
 
 Every push runs the Tiny Tapeout flow: synthesis, place and route at a 20 ns clock, timing in three corners,
-antenna, LVS and DRC, the precheck, and the full cocotb suite on the gate-level netlist.
+antenna, LVS and DRC, the precheck, and the cocotb suites `test.py` (17 tests of the ROM firmware),
+`test_isa_v2_rtl.py` (18 tests of the version-2 instructions and the thread schedules) and `test_spi_master_fast.py`
+(13 tests of the 5 MHz SPI master) on the gate-level netlist.
 
 ## What this does not cover
 
