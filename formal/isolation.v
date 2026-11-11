@@ -6,7 +6,9 @@
  * copies but the other three threads are in ARBITRARY, different states (different program
  * counters, registers, stalls, running or halted, even different channel contents). The proof is
  * that thread T stays identical in A and B forever: same PC, A, X, C, stall counter, return stack,
- * running flag, and the same instruction executing in the same clock cycle.
+ * running flag, its 16 bytes of data memory, and the same instruction executing in the same clock cycle.
+ * The thread schedule is an arbitrary legal table (shared by both copies), so this holds for the
+ * default schedule and for every faster one.
  *
  * Why this is the claim that matters: the other threads only reach thread T through shared
  * resources. The pins are inputs to T and are the same in both copies. The output pins and the
@@ -38,6 +40,11 @@ module isolation #(
     end
   endgenerate
 
+  // The schedule (slot -> thread table) is one arbitrary legal constant, shared by both copies.
+  (* anyconst *) wire [7:0] sched;
+  wire sched_ok = sched[1:0] != sched[3:2] && sched[3:2] != sched[5:4] &&
+                  sched[5:4] != sched[7:6] && sched[7:6] != sched[1:0];
+
   wire [7:0]  fa_a, fa_b;
   wire [7:0]  rom_addr_a, rom_addr_b;
   wire [15:0] rom_data_a = rom_flat[16*(rom_addr_a) +: 16];
@@ -49,19 +56,20 @@ module isolation #(
   wire [47:0] wait_a, wait_b;
   wire [7:0]  sp_a, sp_b;
   wire [127:0] stack_a, stack_b;
+  wire [511:0] mem_a, mem_b;
   wire [15:0] ir_a, ir_b;
   wire [1:0]  slot_a, ethr_a, slot_b, ethr_b;
   wire        ev_a, ev_b, mbf_a, mbf_b;
 
-  cpu cpu_a (.clk(clk), .rst_n(rst_n), .pins_in(pins_in), .pins_out(po_a), .od_pull(od_a),
+  cpu cpu_a (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po_a), .od_pull(od_a),
              .rom_addr(rom_addr_a), .rom_addr_rep(), .rom_data(rom_data_a),
              .f_pc(pc_a), .f_a(a_a), .f_x(x_a), .f_c(c_a), .f_act(act_a), .f_wait(wait_a),
-             .f_sp(sp_a), .f_fa(fa_a), .f_stack(stack_a), .f_ir(ir_a), .f_slot(slot_a),
+             .f_sp(sp_a), .f_fa(fa_a), .f_stack(stack_a), .f_mem(mem_a), .f_ir(ir_a), .f_slot(slot_a),
              .f_ethr(ethr_a), .f_evalid(ev_a), .f_mb_full(mbf_a));
-  cpu cpu_b (.clk(clk), .rst_n(rst_n), .pins_in(pins_in), .pins_out(po_b), .od_pull(od_b),
+  cpu cpu_b (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po_b), .od_pull(od_b),
              .rom_addr(rom_addr_b), .rom_addr_rep(), .rom_data(rom_data_b),
              .f_pc(pc_b), .f_a(a_b), .f_x(x_b), .f_c(c_b), .f_act(act_b), .f_wait(wait_b),
-             .f_sp(sp_b), .f_fa(fa_b), .f_stack(stack_b), .f_ir(ir_b), .f_slot(slot_b),
+             .f_sp(sp_b), .f_fa(fa_b), .f_stack(stack_b), .f_mem(mem_b), .f_ir(ir_b), .f_slot(slot_b),
              .f_ethr(ethr_b), .f_evalid(ev_b), .f_mb_full(mbf_b));
 
   // ---- thread-T slices ----------------------------------------------------------------------
@@ -72,6 +80,7 @@ module isolation #(
   wire [11:0] tw_a  = wait_a[12*T+:12], tw_b = wait_b[12*T+:12];
   wire [1:0]  tsp_a = sp_a[2*T+:2],  tsp_b = sp_b[2*T+:2];
   wire [31:0] tst_a = stack_a[32*T+:32], tst_b = stack_b[32*T+:32];
+  wire [127:0] tm_a = mem_a[128*T+:128], tm_b = mem_b[128*T+:128];   // thread T's data memory
   wire        tact_a = act_a[T],     tact_b = act_b[T];
 
   // ---- helper invariants of one copy (proved for all reachable states in pipeline.v) --------
@@ -80,21 +89,24 @@ module isolation #(
     input [7:0]  fa;
     input [15:0] ir;
     input [1:0]  slot, ethr;
+    input [7:0]  sc;            // the schedule table
     input        ev;
     input [15:0] romword;       // the program word at the PC of that thread
+    reg [1:0] sm1;              // slot - 1, kept at 2 bits so that it wraps
     begin
-      inv = (!ev || ethr == slot - 2'd1)                     // I1: executes the thread fetched last clock
-            && (fa == pc[8*slot+:8])                         // I2: fetch address is that thread's PC
+      sm1 = slot - 2'd1;
+      inv = (!ev || ethr == sc[2*sm1 +: 2])        // I1: executes the thread fetched last clock
+            && (fa == pc[8*sc[2*slot +: 2]+:8])              // I2: fetch address is that thread's PC
             && (!ev || ir == romword);                       // I3: the instruction is the one at its PC
     end
   endfunction
 
-  wire inv_a = inv(pc_a, fa_a, ir_a, slot_a, ethr_a, ev_a, rom_flat[16*(pc_a[8*ethr_a+:8]) +: 16]);
-  wire inv_b = inv(pc_b, fa_b, ir_b, slot_b, ethr_b, ev_b, rom_flat[16*(pc_b[8*ethr_b+:8]) +: 16]);
+  wire inv_a = inv(pc_a, fa_a, ir_a, slot_a, ethr_a, sched, ev_a, rom_flat[16*(pc_a[8*ethr_a+:8]) +: 16]);
+  wire inv_b = inv(pc_b, fa_b, ir_b, slot_b, ethr_b, sched, ev_b, rom_flat[16*(pc_b[8*ethr_b+:8]) +: 16]);
 
   // ---- the relation that must hold forever ---------------------------------------------------
   wire t_same = tpc_a == tpc_b && ta_a == ta_b && tx_a == tx_b && tc_a == tc_b && tw_a == tw_b &&
-                tsp_a == tsp_b && tst_a == tst_b && tact_a == tact_b;
+                tsp_a == tsp_b && tst_a == tst_b && tm_a == tm_b && tact_a == tact_b;
   wire pipe_same = slot_a == slot_b && ethr_a == ethr_b &&
                    (ethr_a != T || (ev_a == ev_b && (!ev_a || ir_a == ir_b)));
   wire rel = t_same && pipe_same && inv_a && inv_b;
@@ -116,6 +128,7 @@ module isolation #(
   always @(posedge clk) first <= 1'b0;
 
   always @* begin
+    assume (sched_ok);
     if (first) assume (rel);                                  // start anywhere that satisfies rel
     assume (!(run_a && bad_ir(ir_a, ethr_a == T)));
     assume (!(run_b && bad_ir(ir_b, ethr_b == T)));

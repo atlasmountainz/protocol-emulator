@@ -19,7 +19,8 @@ The chip runs one of two programs:
 2. Raise LOAD.
 3. For each byte of the image, in order: set `ui[7:0]`, then raise STROBE, then lower STROBE. Words are
    sent **low byte first**, so word 0 is bytes 0 and 1, word 1 is bytes 2 and 3, and so on. The image is
-   256 words = 512 bytes. The byte pointer wraps after 512 bytes.
+   256 words = 512 bytes. Optionally send one more byte, **byte 512**, the thread schedule (below). The byte
+   pointer wraps after 1024 bytes; bytes 513 to 1023 are ignored.
 4. Lower LOAD (set the mode/start pins to the values the program expects at the same time). The CPU
    starts at address 0 about three clocks later.
 
@@ -27,6 +28,26 @@ Raising LOAD again at any time restarts the pointer at 0 and halts the CPU, so a
 without a reset. A reset with LOAD low goes back to the ROM firmware. A reset with LOAD held high keeps
 the program memory contents, so a program loaded once can be run again without sending it twice, until
 the chip loses power.
+
+## Thread schedule (byte 512)
+
+The four threads normally take turns in the order 0, 1, 2, 3 (`docs/isa.md`). Byte 512 of a load replaces that
+**schedule**: bits `[2s+1:2s]` of the byte name the thread that owns clock slot `s` (s = 0..3), so the default is
+`0xE4` (`11 10 01 00`). A thread may own two slots two clocks apart and then runs at one instruction per 2 clocks
+instead of one per 4:
+
+| Byte 512 | Slots | Instruction period |
+|---|---|---|
+| `0xE4` (default, or no byte sent) | 0 1 2 3 | 80 ns for every thread |
+| `0x88` | 0 2 0 2 | thread 0 and thread 2 at 40 ns (threads 1 and 3 never run) |
+| `0x84` | 0 1 0 2 | thread 0 at 40 ns, threads 1 and 2 at 80 ns |
+| `0x44` | 0 1 0 1 | thread 0 and thread 1 at 40 ns |
+
+A thread that is in no slot never runs. The schedule is illegal if the same thread owns two slots that follow
+each other (slot 3 and slot 0 follow each other too); the chip then uses the default instead. The first byte of
+every load restores the default, so a program image without byte 512 always runs with the default schedule.
+A reset with LOAD held high keeps the schedule together with the program memory; a reset with LOAD low restores
+the default. The loader in `test/loader.py` takes the schedule as an optional argument.
 
 ## Timing rules for the host
 
