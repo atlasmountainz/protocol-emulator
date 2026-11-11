@@ -29,7 +29,10 @@ the timing windows:
 | `test_leds_keyboard_midi.py` | 7 | WS2812 waveform and pixel decode against the spec windows; PS/2 receive at 10 and 16.7 kHz with jitter and error frames; MIDI byte timing |
 | `test_i2c_target.py` | 18 | I2C target (slave) at 100 and 400 kHz: ACK/NACK, repeated start, auto-increment, wrong address, back-to-back transactions; margin test at 588 kHz |
 | `test_spi_target.py` | 10 | SPI target (slave) in modes 0 and 3: ID, table read with auto-increment, status counter, CS re-framing at any bit, clock duty cycle, minimum CS timing, 60 random frames per mode; rates from 250 kHz to 1.35 MHz |
-| `test_onewire_jtag.py` | 10 | 1-Wire master with in-firmware CRC8 (good, corrupted and missing devices, stuck bus); JTAG master against a TAP model (1 to 5 devices in the chain, dead TDO) |
+| `test_onewire_jtag.py` | 10 | 1-Wire master with in-firmware CRC8 (good, corrupted and missing devices, stuck bus); JTAG master against a TAP model (1 to 5 devices in the chain, dead TDO); the chip must drive no pad other than the protocol's own |
+| `test_i2c_target_regs.py` | 28 | I2C target with 16 registers in the data memory: sweeps, single reads, wraparound, repeated start, wrong address; 100 and 400 kHz on two schedules; SCL sweep to the limit; 15 firmware mutants |
+| `test_spi_master_fast.py` | 13 | SPI master at 5 MHz (schedule `0,1,0,2`) and 8.33 MHz (`0,1,0,1`): SCK period and duty from edge timestamps, MOSI setup and hold, CS_N timing, MISO sampling window; 17 firmware mutants |
+| `test_isa_v2_rtl.py` | 18 | the ISA v2 instructions on the real chip: ALU with carry and borrow corner values, every branch condition taken and not taken, data memory (direct, X-indexed, wraparound, per thread), `JMPA` / `CALLA` / `RETL` lookup tables, wide pin access, undefined sub-opcodes as `NOP`, every kind of thread schedule (default, `0,1,0,2`, `0,1,0,1`, ... , an illegal one, none sent) |
 
 ## 2. Random programs against an independent model
 
@@ -39,8 +42,17 @@ targets, random pin stimulus, four threads, channel and SPAWN traffic), runs eac
 and compares every architectural register of all four threads on every clock edge. It also fails if any
 instruction or branch outcome was never exercised across the seeds.
 
-Latest runs on the 256-word design: 100 of 100 seeds match with the program in the ROM, and 100 of 100 match
-with each program loaded into the program memory over the pins. A random program is at most 256 instructions.
+The model and the generator cover instruction set version 2 (about one program in five is version 1 only) and, in
+the loaded-program runs, a random thread schedule: mostly legal ones including the fast ones, and about one in
+eight deliberately illegal, where the chip must fall back to the default. The comparison includes all 64 bytes
+of data memory. 120 coverage counters (every instruction, both outcomes of every branch, carry and borrow set and
+clear, memory wraparound, ...) must all be hit across the seeds, otherwise the run fails.
+
+Latest runs on the final design: 100 of 100 seeds match with the program in the ROM, and 100 of 100 match with
+each program loaded into the program memory over the pins with its own schedule. A random program is at most 256
+instructions. The model itself has 478 pure-Python tests with hand-derived expected values; 17 deliberate
+mutations of the model (borrow polarity, rotate carry, memory wraparound, fetch slot, memory sharing, ...) were
+each caught.
 
 ## 3. Mutation checks
 
@@ -49,7 +61,9 @@ firmware (a wait count one too short, a flipped bit order, a removed stop-bit ch
 confirming that a test fails. Every mutation of the protocol firmware was caught. The first mutation of the echo
 firmware that survived turned out not to be a bug (the changed wait fell inside the same bit), and a real
 mutation of the same line was caught. `docs/examples-leds-keyboard-midi.md` lists the 15 mutations of the
-WS2812, PS/2 and MIDI programs.
+WS2812, PS/2 and MIDI programs; the rewritten 1-Wire and JTAG programs were mutated 21 times (CRC polynomial, carry
+polarity, bit order, status polarity, counters, wait counts, a scratch-pad access, ...), the register-file I2C target
+15 times and the fast SPI masters 17 times, and every mutant was caught.
 
 ## 4. Formal proofs (`formal/`, Yosys + z3)
 
@@ -57,7 +71,9 @@ Run with `formal/run.sh`. The harnesses wrap the real `src/cpu.v`; the only chan
 ports compiled in under `ifdef FORMAL`, so the chip's RTL is unchanged.
 
 - **Pipeline invariants** (`formal/pipeline.v`), proved inductively for every state reachable from reset, with
-  a reset allowed at any moment: the instruction being executed belongs to the thread that was fetched in the
+  a reset allowed at any moment and for **every legal thread schedule** (the schedule table is an arbitrary
+  constant, so the proof covers the default schedule and all the faster ones, including the program-counter
+  forwarding path that a thread owning two slots needs): the instruction being executed belongs to the thread that the schedule fetched in the
   previous clock; the fetch address is always that thread's program counter; the instruction register holds the
   word at that program counter; the slot counter advances by exactly one every clock.
 - **Thread isolation** (`formal/isolation.v`), for each of the four threads: two copies of the CPU receive the
@@ -65,13 +81,16 @@ ports compiled in under `ifdef FORMAL`, so the chip's RTL is unchanged.
   three threads start in arbitrary, different states. The proof is that thread T then stays identical in both
   copies forever, including the clock cycle in which each of its instructions executes. The two excluded
   interaction points are the channel (thread T does not execute SEND or RECV) and SPAWN (no other thread
-  spawns T); everything else the other threads can do is covered. Result: proved for all
-  four threads (base case and induction step both pass; the relation is preserved by every clock step, so
+  spawns T); everything else the other threads can do is covered. Thread T's 16 bytes of data memory are
+  part of the compared state, and the schedule is an arbitrary legal table shared by both copies. Result: proved for
+  all four threads (base case and induction step both pass; the relation is preserved by every clock step, so
   the induction depth is 2).
-- **The proof can fail:** `formal/run.sh mutant` runs the same proof against a CPU deliberately changed so that
-  a thread's shift result depends on the next thread's program counter. All four runs report a counterexample, in about a minute each.
-  Before this check existed the proof was found to be vacuous (the program memory had been folded into a
-  constant ROM), which is why the check is kept.
+- **The proofs can fail:** `formal/run.sh mutant` runs them against three deliberately broken CPUs: (1) a thread's
+  shift result depends on the next thread's program counter, (2) a memory load reads the next thread's data memory
+  (both against the isolation proof, all four threads), (3) the program-counter forwarding path is removed (against
+  the pipeline invariants). All nine runs report a counterexample. Before this check existed the isolation proof
+  was found to be vacuous (the program memory had been folded into a constant ROM), which is why the check is
+  kept.
 
 ## 5. Hardware flow checks (CI)
 
