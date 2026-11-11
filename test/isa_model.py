@@ -260,8 +260,11 @@ class Model:
             else:
                 self.hit("WIDE_undefined")     # NOP
         elif op == 0xC:
-            cy, a = (a >> 7) & 1, (a << 1) & 0xFF   # bits 11:8 are ignored, as in version 1
-            self.hit("SHL")
+            if ext == 0:                       # SHL; the other sub-opcodes are NOP (docs/isa.md)
+                cy, a = (a >> 7) & 1, (a << 1) & 0xFF
+                self.hit("SHL")
+            else:
+                self.hit("SHLG_undefined")
         elif op == 0xD:
             a = (a & 0xFE) | bit((w >> 7) & 0xF)
             self.hit("INB")
