@@ -36,8 +36,9 @@ CLKS_PER_BIT = 432      # UART, 115200 baud
 
 # ------------------------------------------------------------------------------ common helpers
 
-async def boot(dut, asm_file, uio=0x0F, ui=0):
-    """Reset, load the program over the pins, release LOAD. `uio` is what the pads read at start."""
+async def boot(dut, asm_file, uio=0x01, ui=0):
+    """Reset, load the program over the pins, release LOAD. `uio` is what the pads read at start
+    (only uio[0] is connected to anything: the 1-Wire bus with its pull-up; the other pads float low)."""
     task = getattr(dut, "_clk_task", None)
     if task is None or task.done():          # one clock per test; tests cancel their tasks at the end
         dut._clk_task = cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
@@ -56,9 +57,12 @@ async def boot(dut, asm_file, uio=0x0F, ui=0):
     await ClockCycles(dut.clk, 6)
 
 
-def pads_high(dut):
-    """uio[3:1] are released-pad scratch lines: pulled up, pulled low only by the chip."""
-    return (~int(dut.uio_oe.value)) & 0x0E
+def check_pads(dut, allowed_mask, errors, what):
+    """The programs use no scratch pads: the chip may drive (uio_oe) only the pads in allowed_mask.
+    Pads that are not connected read low here, so a program that relied on a pull-up would fail too."""
+    stray = int(dut.uio_oe.value) & ~allowed_mask & 0xFF
+    if stray and not any("uio_oe" in e for e in errors):      # report once
+        errors.append(f"{what}: chip drives uio_oe = {stray:#04x} (only {allowed_mask:#04x} allowed)")
 
 
 async def uart_monitor(dut, frames, errors):
@@ -249,7 +253,8 @@ class OneWireSlave:
             # --- what the device drives
             slow = (pres_on is not None and pres_on <= now < pres_off) or now < hold_until or self.stuck_low
             bus = 0 if (mlow or slow) else 1
-            dut.uio_in.value = pads_high(dut) | bus
+            dut.uio_in.value = bus
+            check_pads(dut, 0x01, self.errors, "1-Wire")
 
 
 @cocotb.test()
@@ -446,7 +451,8 @@ class JtagChain:
                 self.update_tdo()
             prev_tck = tck
             dut.ui_in.value = self.tdo
-            dut.uio_in.value = pads_high(dut) | 1
+            dut.uio_in.value = 1               # nothing is connected to the pads
+            check_pads(dut, 0x00, self.errors, "JTAG")
 
     def update_tdo(self):
         if self.tdo_stuck is not None:
