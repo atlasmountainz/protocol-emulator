@@ -52,29 +52,45 @@ module tt_um_atlasmountainz_protocol_emulator (
   wire [7:0] ld_byte = sync2[7:0];  // ui[7:0]
 
   reg        strobe_d;
-  reg  [8:0] ld_ptr;                // byte index: bit 0 selects low/high byte
+  reg  [9:0] ld_ptr;                // byte index: bit 0 selects low/high byte; 512 = schedule byte
   reg  [7:0] ld_lo;
   reg        use_ram;               // set once LOAD has been seen since reset
 
   wire wr_pulse = load_en & strobe & ~strobe_d;   // one pulse per STROBE rising edge
-  wire ram_we   = wr_pulse & ld_ptr[0];
+  wire ram_we   = wr_pulse & ld_ptr[0] & ~ld_ptr[9];
 
   always @(posedge clk) begin
     if (!rst_n) begin
       strobe_d <= 1'b0;
-      ld_ptr   <= 9'd0;
+      ld_ptr   <= 10'd0;
       ld_lo    <= 8'd0;
       use_ram  <= 1'b0;
     end else begin
       strobe_d <= strobe;
       if (load_en) use_ram <= 1'b1;
-      if (!load_en) ld_ptr <= 9'd0;
+      if (!load_en) ld_ptr <= 10'd0;
       else if (wr_pulse) begin
-        ld_ptr <= ld_ptr + 9'd1;
+        ld_ptr <= ld_ptr + 10'd1;
         if (!ld_ptr[0]) ld_lo <= ld_byte;
       end
     end
   end
+
+  // ---- Thread schedule (docs/isa.md): slot s runs thread sched_q[2s+:2] --------------------
+  // The first byte of a load restores the default (0,1,2,3); byte 512 of the load sets a new one.
+  // A reset with LOAD low restores the default; a reset with LOAD high keeps the loaded schedule
+  // together with the program memory. An illegal schedule (the same thread in two slots that
+  // follow each other, slot 3 and slot 0 included) is replaced by the default.
+  localparam [7:0] SCHED_DEFAULT = 8'hE4;
+  reg  [7:0] sched_q;
+  always @(posedge clk) begin
+    if (!rst_n && !load_en) sched_q <= SCHED_DEFAULT;
+    else if (wr_pulse && ld_ptr == 10'd0) sched_q <= SCHED_DEFAULT;
+    else if (wr_pulse && ld_ptr == 10'd512) sched_q <= ld_byte;
+  end
+  wire sched_ok = (sched_q[1:0] != sched_q[3:2]) && (sched_q[3:2] != sched_q[5:4]) &&
+                  (sched_q[5:4] != sched_q[7:6]) && (sched_q[7:6] != sched_q[1:0]);
+  wire [7:0] sched_eff = sched_ok ? sched_q : SCHED_DEFAULT;
 
   pmem u_pmem (
       .clk  (clk),
@@ -91,6 +107,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   cpu u_cpu (
       .clk     (clk),
       .rst_n   (rst_n & ~load_en),
+      .sched   (sched_eff),
       .pins_in (sync2),
       .pins_out(uo_out),
       .od_pull (od_pull),
