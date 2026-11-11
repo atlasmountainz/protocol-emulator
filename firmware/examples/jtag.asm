@@ -5,7 +5,7 @@
 ;
 ; Input pins : 0 = ui[0] = TDO
 ; Output pins: 2 = TCK, 3 = TMS, 4 = TDI (push-pull), 0 = UART TX (115200 baud, 8N1)
-; Open-drain : uio[2], uio[3] are scratch lines used by the firmware itself (leave unconnected)
+; Open-drain : none (uio_oe stays 0)
 ; Do not use : uio[5], uio[4] (program loader; LOAD must be low while this runs)
 ;
 ; Sequence:
@@ -21,125 +21,93 @@
 ; status (0 = IDCODE bit 0 was 1, 1 = it was 0), chain length (0xFF = the marker never came back in
 ; 255 clocks).
 ;
-; TCK: high 7 slots, low at least 9 slots: period >= 16 slots = 1.28 us (<= 781 kHz). TMS and TDI change
-; while TCK is low, TDO is sampled a few slots after the TCK falling edge, before the rising edge.
+; TCK: high 7 turns, low at least 11 turns: period >= 18 turns = 1.44 us (<= 694 kHz). TMS and TDI change
+; while TCK is low, TDO is sampled at least 10 turns after the TCK falling edge, before the rising edge.
 ;
-; Bit order: as in onewire.asm, bits are shifted in with SHL / INB, so the first bit is in A[7], and the
-; UART thread sends A with SHL / OUTC: the bytes come out as a human reads them. The chain length is
-; counted in A as a bit-reversed binary number for the same reason (see jt_inc); the status byte is
-; written reversed (true 1 = 0x80). uio[3] is used as a one-bit memory for the status.
+; How it is done: the TMS paths between the scans are TMS bit patterns in A, first bit in A[0], with a
+; 1 above the last bit as an end marker (jt_tms). The two 32-bit scans count their TCKs in X; the last
+; one gets TMS = 1 because XCMP 2 sets C = (X < 2). A received bit is shifted into the top of A (SHR,
+; then OR 0x80 if TDO is 1), and a 0x80 in A at the start of every byte falls out into C after 8 bits,
+; which ends the byte; the first bit shifted in is the LSB, so A holds the true byte and goes to the UART as
+; it is. The chain length is a plain binary count in A (INC). The status is kept in MEM[0] (data memory
+; is zero after reset, which the program relies on).
 
 jt_start:
         SPAWN 1 jt_uart
-        LDA  0x1F             ; 1,1,1,1,1: Test-Logic-Reset
-        LDX  5
+        LDA  0x3F             ; TMS 1,1,1,1,1: Test-Logic-Reset
         CALL jt_tms
-        LDA  0x02             ; 0,1,0,0: Run-Test/Idle, Select-DR, Capture-DR, Shift-DR (TMS idles 0)
-        LDX  4
+        LDA  0x12             ; TMS 0,1,0,0: Run-Test/Idle, Select-DR, Capture-DR, Shift-DR
         CALL jt_tms
         JPIN 0 1 jt_idok      ; TDO is already bit 0 of the IDCODE
-        ODRV 3 0              ; remember: bit 0 was 0
+        LDA  1
+        STM  0                ; status 1: bit 0 was 0
 jt_idok:
-        CALL jt_byte          ; IDCODE bits 0..23
-        CALL jt_byte
-        CALL jt_byte
-        LDX  7
-        CALL jt_ticks         ; bits 24..30
-        PIN  3 1              ; last bit with TMS = 1: leave Shift-DR
-        CALL jt_tick
+        LDX  32               ; 32 TCKs, the last one with TMS = 1
+jt_idbyte:
+        LDA  0x80             ; byte register with its end marker
+jt_idbit:
+        XCMP 2                ; C = 1 on the last TCK
+        OUTC 3                ; TMS = C
+        SHR                   ; C = marker bit; make room at the top
+        JPIN 0 1 jt_one       ; TDO is the bit to shift in
+        JMP  jt_join          ; a 0: nothing to insert (both paths take one turn)
+jt_one:
+        OR   0x80             ; a 1: becomes the new top bit
+jt_join:
+        CALL jt_tck
+        JC   jt_idsend        ; the marker came out: A holds the complete byte
+        DJNZ jt_idbit
+jt_idsend:
         SEND
-        LDA  0x00             ; status 0 = ok
-        JPIN 11 1 jt_stsend
-        LDA  0x80             ; status 1 (reversed) = IDCODE bit 0 was 0
-jt_stsend:
-        SEND
+        DJNZ jt_idbyte
+        LDM  0
+        SEND                  ; status
 
-        LDA  0x07             ; 1,1,1,0,0: Update-DR, Select-DR, Select-IR, Capture-IR, Shift-IR
-        LDX  5
+        LDA  0x27             ; TMS 1,1,1,0,0: Update-DR, Select-DR, Select-IR, Capture-IR, Shift-IR
         CALL jt_tms
         PIN  4 1              ; TDI = 1
-        LDX  31
+        LDX  32               ; 32 ones, the last TCK with TMS = 1: Exit1-IR
 jt_ir:
-        CALL jt_tck           ; 31 ones with TMS = 0
+        XCMP 2
+        OUTC 3
+        CALL jt_tck
         DJNZ jt_ir
-        PIN  3 1
-        CALL jt_tck           ; the 32nd with TMS = 1: Exit1-IR
-        LDA  0x03             ; 1,1,0,0: Update-IR, Select-DR, Capture-DR, Shift-DR
-        LDX  4
-        CALL jt_tms           ; (leaves TMS = 0)
+        LDA  0x13             ; TMS 1,1,0,0: Update-IR, Select-DR, Capture-DR, Shift-DR (leaves TMS = 0)
+        CALL jt_tms           ; (and A = 0)
 
-        PIN  4 1
         CALL jt_tck           ; the marker: one 1 in on TDI
         PIN  4 0
-        LDA  0
 jt_find:
-        CALL jt_inc           ; A = number of clocks since the marker
+        INC                   ; A = number of clocks since the marker
+        JZ   jt_nomark        ; 256: it never came back
         JPIN 0 1 jt_found     ; marker reached TDO?
         CALL jt_tck
         JMP  jt_find
 jt_found:
         SEND
-        LDA  0x03             ; 1,1,0: Exit1-DR, Update-DR, Run-Test/Idle
-        LDX  3
+        LDA  0x0B             ; TMS 1,1,0: Exit1-DR, Update-DR, Run-Test/Idle
         CALL jt_tms
         HALT
+jt_nomark:
+        NOT                   ; A = 0: report 0xFF
+        SEND
+        HALT
 
-; One TCK cycle. jt_tick first shifts the TDO bit into A (SHL / INB); jt_tck does not touch A.
-jt_tick:
-        SHL
-        INB  0
-jt_tck:
+jt_tck:                       ; one TCK cycle: high 7 turns, then low
         PIN  2 1
         WAIT 5
         PIN  2 0
         WAIT 4
         RET
 
-jt_ticks:                     ; X ticks
-        CALL jt_tick
-        DJNZ jt_ticks
-        RET
-
-jt_byte:                      ; shift 8 bits in and give them to the UART thread
-        LDX  8
-        CALL jt_ticks
-        SEND
-        RET
-
-jt_tms:                       ; X clocks with the TMS bits of A, LSB first
+jt_tms:                       ; one TCK per bit of A, LSB first, until only the end marker is left (A = 0)
         SHR
+        JZ   jt_tmsx          ; the end marker came out
         OUTC 3
         CALL jt_tck
-        DJNZ jt_tms
+        JMP  jt_tms
+jt_tmsx:
         RET
-
-; A = A + 1 where A holds a bit-reversed count: the count's LSB is A[7], so one step of the carry
-; chain is "shift left, look at the bit that falls out". A bit is looked at by putting it on a pad
-; (uio[2]) and reading the pad back.
-jt_inc:
-        LDX  8
-jt_ic:
-        SHL                   ; C = next count bit, LSB first
-        ODRVC 2
-        JPIN 10 0 jt_iz       ; a 0 absorbs the carry
-        DJNZ jt_ic            ; a 1 becomes 0 (SHL already left a 0 in A[0]); the carry goes on
-        JMP  jt_nomark        ; the count wrapped around
-jt_iz:
-        ODRV 2 1
-        NOP
-        INB  10               ; the 0 becomes 1
-        DJNZ jt_ip
-        RET
-jt_ip:
-        SHL                   ; rotate the remaining bits round unchanged
-        ODRVC 2
-        INB  10
-        DJNZ jt_ip
-        RET
-jt_nomark:
-        LDA  0xFF
-        SEND
-        HALT
 
 ; ---- thread 1: UART transmitter (identical to the one in onewire.asm) ------------------------
 jt_uart:
@@ -148,7 +116,7 @@ jt_uart:
         LDX  8
         WAIT 104
 jt_ubit:
-        SHL
+        SHR
         OUTC 0
         WAIT 104
         DJNZ jt_ubit
