@@ -52,7 +52,8 @@ def main():
     ram = "--ram" in sys.argv[1:]
     n = int(args[0]) if len(args) > 0 else 40
     first = int(args[1]) if len(args) > 1 else 1
-    work = HERE / "sim_build" / "random"
+    btag = os.environ.get("RAND_TAG", "ram" if ram else "rom")   # separate build dirs let several runs go in parallel
+    work = HERE / "sim_build" / f"random_{btag}"
     work.mkdir(parents=True, exist_ok=True)
     rom_src = HERE / "rom_random.v"
     total, failed = {}, []
@@ -71,7 +72,7 @@ def main():
         tag = (f" sched {sched}" + ("" if valid_schedule(sched) else " (illegal, default expected)")
                if ram else "")
         cmd = ["make", "-C", str(HERE), "COCOTB_TEST_MODULES=random_test",
-               f"ROM_SRC={rom_src}", "SIM_BUILD=sim_build/rand", f"PLUSARGS=+prog={hexf}",
+               f"ROM_SRC={rom_src}", f"SIM_BUILD=sim_build/rand_{btag}", f"PLUSARGS=+prog={hexf}",
                f"COCOTB_RESULTS_FILE={work}/results_{seed}.xml"]
         r = subprocess.run(cmd, env=env, capture_output=True, text=True)
         ok = r.returncode == 0 and "FAIL=0" in r.stdout
