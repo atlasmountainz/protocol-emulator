@@ -4,7 +4,8 @@
 Usage: asm.py OUT.v IN1.asm [IN2.asm ...]   (see tools/build_rom.sh)
 
 Syntax: one instruction per line, `;` starts a comment, `label:` defines a label.
-Numbers are decimal or 0x-hex. See docs/isa.md for the instruction set.
+Numbers are decimal or 0x-hex. See docs/isa.md for the instruction set (version 2: ALU, conditional
+branches, data memory, JMPA/CALLA/RETL, wide pin ops).
 """
 import sys
 
@@ -35,7 +36,67 @@ OPS = {
     "SEND": (0xF, []),                      # channel: send A (blocks while the channel is full)
     "RECV": (0xF, []),                      # channel: A = received byte (blocks while empty)
     "SPAWN": (0xF, ["thread", "addr"]),     # start thread 1..3 at addr
+    # ---- ISA v2 (docs/isa.md): every one of these sits in bits that v1 ignored ----
+    # conditional branches: opcode 0x4 with a condition in bits 11:8 (JMP is condition 0)
+    "JC":   (0x4, ["addr"]),                # jump if C == 1
+    "JNC":  (0x4, ["addr"]),                # jump if C == 0
+    "JZ":   (0x4, ["addr"]),                # jump if A == 0
+    "JNZ":  (0x4, ["addr"]),                # jump if A != 0
+    "JMI":  (0x4, ["addr"]),                # jump if A[7] == 1
+    "JPL":  (0x4, ["addr"]),                # jump if A[7] == 0
+    "JEQ":  (0x4, ["addr"]),                # jump if A == X
+    "JNE":  (0x4, ["addr"]),                # jump if A != X
+    # accumulator with an immediate: opcode 0x6 with the operation in bits 11:8 (LDA is 0)
+    "ADD":  (0x6, ["imm8"]),                # {C, A} = A + imm8
+    "SUB":  (0x6, ["imm8"]),                # A -= imm8; C = borrow
+    "AND":  (0x6, ["imm8"]),
+    "OR":   (0x6, ["imm8"]),
+    "XOR":  (0x6, ["imm8"]),
+    "CMP":  (0x6, ["imm8"]),                # C = (A < imm8)
+    "ADC":  (0x6, ["imm8"]),                # {C, A} = A + imm8 + C
+    "SBC":  (0x6, ["imm8"]),                # A = A - imm8 - C; C = borrow
+    # accumulator / X without an operand: opcode 0x7 with the function in bits 11:8 (SHR is 0)
+    "ROR":  (0x7, []),                      # rotate right through C
+    "ROL":  (0x7, []),                      # rotate left through C
+    "INC":  (0x7, []),
+    "DEC":  (0x7, []),
+    "NOT":  (0x7, []),
+    "CMPX": (0x7, []),                      # C = (A < X)
+    "SWAP": (0x7, []),                      # swap the nibbles of A
+    "TAX":  (0x7, []),                      # X = A
+    "TXA":  (0x7, []),                      # A = X
+    "XCHG": (0x7, []),                      # exchange A and X
+    "ADDX": (0x7, []),                      # {C, A} = A + X
+    "SUBX": (0x7, []),                      # A -= X; C = borrow
+    "ANDX": (0x7, []),
+    "ORX":  (0x7, []),
+    "XORX": (0x7, []),
+    # X with an immediate: opcode 0x9 with the operation in bits 11:8 (LDX is 0)
+    "XADD": (0x9, ["imm8"]),                # X += imm8
+    "XCMP": (0x9, ["imm8"]),                # C = (X < imm8)
+    # wide pin access: opcode 0xB with the function in bits 11:8 (IN is 0)
+    "INH":  (0xB, []),                      # A = input pins [15:8]
+    "OUTA": (0xB, []),                      # output pins = A
+    "ODRVA": (0xB, []),                     # open-drain pads = A (0 pulls low, 1 releases)
+    # data memory and computed jumps (extended family)
+    "LDM":  (0xF, ["off"]),                 # A = MEM[off]
+    "STM":  (0xF, ["off"]),                 # MEM[off] = A
+    "LDMX": (0xF, ["off"]),                 # A = MEM[(X + off) & 15]
+    "STMX": (0xF, ["off"]),                 # MEM[(X + off) & 15] = A
+    "JMPA": (0xF, []),                      # PC = A
+    "CALLA": (0xF, []),                     # push PC+1; PC = A
+    "RETL": (0xF, ["imm8"]),                # A = imm8; return
 }
+
+# Sub-operation field (bits 11:8) of the v2 mnemonics that share an opcode with a v1 one.
+COND = {"JMP": 0, "JC": 1, "JNC": 2, "JZ": 3, "JNZ": 4, "JMI": 5, "JPL": 6, "JEQ": 7, "JNE": 8}
+ACC_IMM = {"LDA": 0, "ADD": 1, "SUB": 2, "AND": 3, "OR": 4, "XOR": 5, "CMP": 6, "ADC": 7, "SBC": 8}
+ACC_X = {"SHR": 0, "ROR": 1, "ROL": 2, "INC": 3, "DEC": 4, "NOT": 5, "CMPX": 6, "SWAP": 7,
+         "TAX": 8, "TXA": 9, "XCHG": 10, "ADDX": 11, "SUBX": 12, "ANDX": 13, "ORX": 14, "XORX": 15}
+X_IMM = {"LDX": 0, "XADD": 1, "XCMP": 2}
+WIDE_PIN = {"IN": 0, "INH": 1, "OUTA": 2, "ODRVA": 3}
+# data memory: extended sub-opcode 0xC, bit 7 = store, bit 6 = X-indexed, bits 3:0 = offset
+MEM_OPS = {"LDM": 0x00, "LDMX": 0x40, "STM": 0x80, "STMX": 0xC0}
 
 
 def num(tok, labels=None):
@@ -55,7 +116,28 @@ def encode(mn, args, labels, lineno):
             raise SystemExit(f"line {lineno}: {mn} operand '{name}'={v[name]} out of range 0..{hi}")
 
     w = op << 12
-    if mn == "PIN":
+    if mn in COND:
+        rng("addr", ROM_DEPTH - 1)
+        w |= (COND[mn] << 8) | v["addr"]
+    elif mn in ACC_IMM and mn != "LDA":
+        rng("imm8", 255)
+        w |= (ACC_IMM[mn] << 8) | v["imm8"]
+    elif mn in ACC_X:
+        w |= ACC_X[mn] << 8
+    elif mn in ("XADD", "XCMP"):
+        rng("imm8", 255)
+        w |= (X_IMM[mn] << 8) | v["imm8"]
+    elif mn in ("INH", "OUTA", "ODRVA"):
+        w |= WIDE_PIN[mn] << 8
+    elif mn in MEM_OPS:
+        rng("off", 15)
+        w |= (0xC << 8) | MEM_OPS[mn] | v["off"]
+    elif mn in ("JMPA", "CALLA"):
+        w |= (0xD << 8) | (1 if mn == "CALLA" else 0)
+    elif mn == "RETL":
+        rng("imm8", 255)
+        w |= (0x7 << 8) | v["imm8"]
+    elif mn == "PIN":
         rng("pin", 7); rng("val", 1)
         w |= (v["pin"] << 8) | v["val"]
     elif mn in ("OUT", "LDA", "LDX"):
