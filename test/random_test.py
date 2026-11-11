@@ -1,7 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Differential test: RTL vs the Python ISA model on a random program with random pin inputs.
 
-Not part of the default `make` run; use `python3 random_run.py` (it sets PROG_HEX / PROG_SEED).
+Not part of the default `make` run; use `python3 random_run.py` (it sets PROG_HEX / PROG_SEED, and in
+RAM mode PROG_SCHED, see below).
+
+Compared after every clock edge: pc, A, X, C, WAIT counter, running flag and return-stack pointer of
+every thread, the output pins, the open-drain pulls, the channel, and the 4 x 16 bytes of data memory
+(cpu.dmem_q, a packed 512-bit register: byte i of thread t is bits [8*(16*t+i) +: 8]).
+
+In RAM mode (LOAD_RAM=1) the program is loaded over the pins together with a thread schedule (byte 512,
+see docs/loading.md): PROG_SCHED="a,b,c,d" (slot 0 first), default gen_schedule(PROG_SEED). About one in
+eight generated schedules is illegal; the hardware must then run the default 0 1 2 3, so the model is
+built with effective_schedule(). In ROM mode the schedule is the default.
 """
 import json
 import os
@@ -12,13 +22,15 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, Timer
 
-from isa_model import Model, STATE_NAMES
+from isa_model import Model, STATE_NAMES, DEFAULT_SCHEDULE, effective_schedule, gen_schedule
 from loader import load_program, LOAD, STROBE, RAM_WORDS
 
 CYCLES = int(os.environ.get("RAND_CYCLES", "6000"))
 # LOAD_RAM=1: send all 256 words over the pins into the program memory and run from there
 # Otherwise the program is in the simulation-only ROM.
 LOAD_RAM = os.environ.get("LOAD_RAM") == "1"
+# PROG_SCHED="0,1,0,2": the schedule to load in RAM mode (default: gen_schedule(PROG_SEED)).
+PROG_SCHED = os.environ.get("PROG_SCHED")
 
 
 def load_hex(path):
@@ -31,11 +43,15 @@ async def test_random_program(dut):
     rom = load_hex(os.environ["PROG_HEX"])
     if LOAD_RAM:
         rom = rom[:RAM_WORDS]
-    model = Model(rom)
+    sched = None                               # the schedule that is loaded (RAM mode only)
+    if LOAD_RAM:
+        sched = (tuple(int(v) for v in PROG_SCHED.split(",")) if PROG_SCHED else gen_schedule(seed))
+    model = Model(rom, effective_schedule(sched) if sched else DEFAULT_SCHEDULE)
     rng = random.Random(seed ^ 0x5EED)
 
     cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     cpu = dut.user_project.u_cpu
+    dut._log.info(f"seed {seed}: loaded schedule {sched}, effective {tuple(model.sched)}")
 
     # Reset (the model resets with it)
     dut.ena.value = 1
@@ -55,7 +71,7 @@ async def test_random_program(dut):
 
     if LOAD_RAM:
         dut.rst_n.value = 1
-        await load_program(dut, rom + [0xF000] * (RAM_WORDS - len(rom)), rng)
+        await load_program(dut, rom + [0xF000] * (RAM_WORDS - len(rom)), rng, sched)
         # Release LOAD with the first stimulus pins p0, then p1. The CPU leaves reset when LOAD
         # has gone through the 2-flop synchroniser, i.e. its first live edge sees p0 on sync2.
         p0 = (rng.getrandbits(8), rng.getrandbits(8) & uio_mask)
@@ -90,8 +106,11 @@ async def test_random_program(dut):
                     (int(cpu.wait_q.value) >> (12 * th)) & 0xFFF,
                     (int(cpu.act_q.value) >> th) & 1,
                     (int(cpu.sp_q.value) >> (2 * th)) & 3]
-        got = tuple(got) + (int(dut.uo_out.value), int(dut.uio_oe.value), int(cpu.mb.value),
-                            int(cpu.mb_full.value))
+        got += [int(dut.uo_out.value), int(dut.uio_oe.value), int(cpu.mb.value),
+                int(cpu.mb_full.value)]
+        dmem = int(cpu.dmem_q.value)
+        got += [(dmem >> (8 * (16 * th + i))) & 0xFF for th in range(4) for i in range(16)]
+        got = tuple(got)
         exp = model.state()
         if got != exp:
             diff = ", ".join(f"{n}: rtl={g:#x} model={e:#x}"
