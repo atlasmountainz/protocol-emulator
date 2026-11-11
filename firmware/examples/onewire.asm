@@ -3,59 +3,46 @@
 ; Build the image with:  python3 tools/load_image.py build/onewire firmware/examples/onewire.asm
 ;
 ; Open-drain : uio[0] = DQ (1-Wire bus, external pull-up). The pad is read back as input pin 8.
-;              uio[1], uio[2], uio[3] = scratch lines between the threads, see below. Leave them unconnected.
+;              No other pad is used or driven (uio_oe stays 0 except bit 0).
 ; Output pins: uo[0] = UART TX (115200 baud, 8N1)
-; Do not use  : uio[5], uio[4] (program loader; LOAD must be low while this runs).
+; Do not use  : uio[5], uio[4] (program loader; LOAD must be low while this runs)
 ;
 ; Sequence: reset pulse (500 us low), presence sample 70 us after release, READ ROM (0x33), 64 bits of
-; ROM code. The CRC8 (Dallas/Maxim, x^8+x^5+x^4+1) is computed by firmware over all 64 bits as they
-; arrive: it ends at zero exactly when the 8th byte equals the CRC of the first seven.
+; ROM code. The CRC8 (Dallas/Maxim, x^8+x^5+x^4+1, shifted right, polynomial 0x8C) is computed over all
+; 8 bytes: it ends at zero exactly when the 8th byte equals the CRC of the first seven.
 ; UART output, in order: the 8 ROM bytes (family code first, CRC byte last), then one status byte:
 ;   0 = CRC ok, 1 = CRC error.   No presence pulse (or bus stuck low): only one byte, 2.
 ;
-; Why three threads: the ISA has no ALU and no data memory. A branch can only test a pin, and a thread
-; has just A, X and C. Receiving needs A for the byte; the CRC register needs a second A; the UART needs a
-; third. So the work is split over the barrel:
-;   thread 0  bus timing, byte assembly, sequencing
-;   thread 1  CRC co-processor: A = the CRC register (kept bit-reversed, which does not matter: a zero
-;             stays zero). It wakes on a strobe from thread 0, looks at the data line itself, and
-;             publishes "CRC register is zero" on a pad
-;   thread 2  UART transmitter
-; The threads talk through three open-drain pads that they pull low and read back (docs/isa.md):
-;   uio[1] = pad 1 / input 9   STROBE   thread 0 pulls it low for 8 slots at every sampled bit
-;   uio[2] = pad 2 / input 10  Q        thread 1 scratch: carry from C to a pin, so that a bit of A can be branched on
-;   uio[3] = pad 3 / input 11  ZERO     thread 1 releases it (high) while the CRC register is non-zero
-; A pad that is released has to read back high; the pad needs no external part, but nothing may pull
-; it low from outside.
+; Two threads: thread 0 does the bus, the byte assembly and the CRC; thread 1 is the UART transmitter
+; and gets each byte through the channel. Thread 0 keeps its state in A, X and C and in two cells of its
+; private data memory (the memory is zero after reset, which the program relies on):
+;   MEM[0]  CRC register
+;   MEM[1]  byte counter, counted in steps of 0x20 so that the carry out of ADD flags the 8th byte
 ;
-; Bit order: the 1-Wire bus sends the LSB of each byte first, and SHL / INB shifts the first bit into A[7].
-; So A holds each byte in wire order (a "bit-reversed" value); the UART thread shifts it out with
-; SHL / OUTC, which puts the first bit (the LSB) on the line first: no reversal needed. Status bytes
-; are therefore written reversed in this file (true 1 = 0x80, true 2 = 0x40).
+; A received byte is assembled in A with SHR and OR: each bit is shifted in at the top, so the first
+; bit on the wire (the LSB) ends up in A[0] and A holds the true byte. A starts as 0x80, a marker that
+; falls out into C on the 8th shift and so ends the byte without a bit counter. After the 8th bit the
+; CRC step runs inside the idle part of that same slot, so all 64 read slots have the same length.
 ;
-; Timing (1 slot = 4 clocks = 80 ns):
-;   reset low        6254 slots = 500.3 us   (spec: >= 480 us)
-;   presence sample  876 slots after release = 70.1 us (device pulls low 15-60 us after release for 60-240 us)
+; Timing (1 turn = 4 clocks = 80 ns):
+;   reset low        6254 turns = 500.3 us   (spec: >= 480 us)
+;   presence sample  876 turns after release = 70.1 us (device pulls low 15-60 us after release for 60-240 us)
 ;   bus recovery     the line is released for 483 us in all before the first command
-;   write-1          low 75 slots = 6.0 us, slot 880 slots = 70.4 us
-;   write-0          low 814 slots = 65.1 us (spec 60-120 us), slot 880 slots, recovery 66 slots = 5.3 us
-;   read             low 75 slots = 6.0 us, sampled 12.0 us after the falling edge (spec: within 15 us),
-;                    slot 863 slots = 69.0 us
+;   write-1          low 75 turns = 6.0 us, slot 880 turns = 70.4 us
+;   write-0          low 814 turns = 65.1 us (spec 60-120 us), slot 880 turns, recovery 66 turns = 5.3 us
+;   read             low 75 turns = 6.0 us, sampled 12.1 us after the falling edge (spec: within 15 us),
+;                    slot 863 turns = 69.0 us (every read slot, including the one that ends a byte)
 
 ow_start:
-        SPAWN 2 uart_thread
-        ODRV 0 0              ; reset pulse: pull DQ low for 6254 slots
-        LDX  2
-ow_rst:
-        WAIT 3124
-        DJNZ ow_rst
+        SPAWN 1 uart_thread
+        ODRV 0 0              ; reset pulse: pull DQ low for 6254 turns
+        WAIT 4000
+        WAIT 2251
         ODRV 0 1              ; release
         WAIT 874
         JPIN 8 1 ow_nopres    ; presence pulse = line low 70 us after release
-        LDX  2
-ow_rec:
-        WAIT 2580             ; wait out the rest of the reset slot (483 us in all)
-        DJNZ ow_rec
+        WAIT 4000             ; wait out the rest of the reset slot (483 us in all)
+        WAIT 1163
         JPIN 8 0 ow_nopres    ; the line must have returned high
 
         LDA  0x33             ; READ ROM, LSB first
@@ -70,109 +57,63 @@ ow_wbit:
         WAIT 62
         DJNZ ow_wbit
 
-        SPAWN 1 crc_start
-        CALL ow_rbyte         ; 8 ROM bytes (each is sent to the UART thread)
-        CALL ow_rbyte
-        CALL ow_rbyte
-        CALL ow_rbyte
-        CALL ow_rbyte
-        CALL ow_rbyte
-        CALL ow_rbyte
-        CALL ow_rbyte
-        LDA  0x00             ; status 0: CRC ok
-        JPIN 11 0 ow_done     ; ZERO pad low = CRC register is zero
-        LDA  0x80             ; status 1 (reversed): CRC error
-ow_done:
-        SEND
-        HALT
-ow_nopres:
-        LDA  0x40             ; status 2 (reversed): no presence
-        SEND
-        HALT
-
-; Read 8 bits into A (first bit ends up in A[7]) and hand the byte to the UART thread.
-ow_rbyte:
-        LDX  8
+ow_byte:                      ; one ROM byte
+        LDA  0x80             ; byte register with its end marker
 ow_rbit:
         ODRV 0 0              ; falling edge
         WAIT 73
         ODRV 0 1              ; release after 6 us: the device now holds the line for a 0
         WAIT 73
-        SHL
-        INB  8                ; sample DQ 12 us after the falling edge
-        ODRV 1 0              ; STROBE: tell the CRC thread, which samples DQ 4 slots later
-        WAIT 6
-        ODRV 1 1
-        WAIT 700              ; rest of the 69 us slot, and time for the CRC thread
-        DJNZ ow_rbit
-        SEND
-        RET
+        SHR                   ; C = marker bit; make room at the top
+        JPIN 8 1 ow_one       ; sample DQ 12 us after the falling edge
+        JMP  ow_join          ; a 0: nothing to insert (both paths take one turn)
+ow_one:
+        OR   0x80             ; a 1: becomes the new top bit
+ow_join:
+        JC   ow_bdone         ; the marker came out: A holds the complete byte
+        WAIT 707              ; rest of the 69 us slot
+        JMP  ow_rbit
 
-; ---- thread 1: CRC co-processor -------------------------------------------------------------
-; Galois LFSR, shifting left, polynomial 0x31 (the Dallas CRC8 with its bit order reversed; the
-; bits are fed in as they arrive on the wire, so no reversal is ever needed). A = register.
-crc_start:
-        ODRV 3 1              ; ZERO released: register treated as non-zero until proven otherwise
-crc_wait:
-        JPIN 9 1 crc_wait     ; wait for STROBE low
-        SHL                   ; C = register bit 7, A = register << 1
-        ODRVC 2               ; Q = that bit
-        JPIN 8 1 crc_d1       ; d = the data bit on DQ
-        JPIN 10 0 crc_test    ; d = 0: feedback = bit 7 = 0, nothing to add
-        JMP  crc_xor
-crc_d1:
-        JPIN 10 1 crc_test    ; d = 1: feedback = ~bit 7 = 0
-crc_xor:                      ; feedback = 1: A = A xor 0x31 (bits 5, 4 and 0), by rotating through Q
-        LDX  2
-crc_p1:
-        SHL                   ; bits 7, 6: unchanged
-        ODRVC 2
-        INB  10
-        DJNZ crc_p1
-        CALL crc_flip         ; bit 5
-        CALL crc_flip         ; bit 4
-        LDX  3
-crc_p2:
-        SHL                   ; bits 3, 2, 1: unchanged
-        ODRVC 2
-        INB  10
-        DJNZ crc_p2
-        CALL crc_flip         ; bit 0
-crc_test:                     ; publish "register == 0" on ZERO (low = zero)
-        ODRV 3 0
+ow_bdone:
+        SEND                  ; the byte goes to the UART thread
+        TAX                   ; CRC: register ^= byte, then 8 shifts, each followed by XOR 0x8C if a 1 fell out
+        LDM  0
+        XORX
         LDX  8
-crc_z:
-        SHL
-        ODRVC 2
-        INB  10               ; (rotates the register back to where it was)
-        JPIN 10 0 crc_zn
-        ODRV 3 1              ; a 1 bit: not zero
-crc_zn:
-        DJNZ crc_z
-crc_rel:
-        JPIN 9 0 crc_rel      ; wait for STROBE high again
-        JMP  crc_wait
+ow_crc:
+        SHR
+        JC   ow_cx
+        JMP  ow_cn            ; (both paths take one turn: the slot length must not depend on the data)
+ow_cx:
+        XOR  0x8C
+ow_cn:
+        DJNZ ow_crc
+        STM  0
+        LDM  1                ; count the byte: 8 x 0x20 = 0x100 sets the carry
+        ADD  0x20
+        STM  1
+        WAIT 665              ; rest of the slot
+        JNC  ow_byte          ; next byte, or fall through after the 8th
 
-crc_flip:                     ; rotate A left one place, inverting the bit that goes round
-        SHL
-        ODRVC 2
-        JPIN 10 1 crc_f1      ; bit was 1: the inverted bit (0) is already there
-        ODRV 2 1
-        NOP
-        INB  10               ; bit was 0: insert 1
-crc_f1:
-        RET
+        LDM  0                ; CRC register: zero = ok
+        JZ   ow_send          ; A = 0 is the status "ok"
+        LDA  1                ; status 1: CRC error
+ow_send:
+        SEND
+        HALT
+ow_nopres:
+        LDA  2                ; status 2: no presence
+        JMP  ow_send
 
-; ---- thread 2: UART transmitter -------------------------------------------------------------
-; Same frame as uart_send in uart_tx.asm (108 slots per bit), but it shifts A out with SHL, so a byte
-; in wire order (first bit in A[7]) goes out first bit first.
+; ---- thread 1: UART transmitter -------------------------------------------------------------
+; The same transmitter as uart_send in uart_tx.asm: 108 turns per bit, LSB first.
 uart_thread:
         RECV
         PIN  0 0              ; start bit
         LDX  8
         WAIT 104
 uart_bit:
-        SHL
+        SHR
         OUTC 0
         WAIT 104
         DJNZ uart_bit
