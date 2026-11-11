@@ -826,3 +826,70 @@ def test_loader_packs_the_schedule_byte():
     assert sched_byte((3, 2, 3, 0)) == 0x3B
     assert sched_byte((0, 0, 1, 2)) == 0x90          # illegal, but still packed as given
     assert SCHED_BYTE == 512
+
+
+# ----------------------------------------------------------------------------------------------
+# cross-check of test/test_isa_v2_rtl.py: its hand-written programs and expected values, run on the model
+# ----------------------------------------------------------------------------------------------
+
+def model_pins(words, sched, ui, uio, clocks):
+    """uo_out and uio_oe of the model on `clocks` consecutive edges (what the cocotb test samples)."""
+    m = Model(list(words), effective_schedule(sched) if sched else DEFAULT)
+    uo, oe = [], []
+    for _ in range(clocks):
+        m.clock((uio << 8) | ui)
+        uo.append(m.pins_out)
+        oe.append(m.od_pull)
+    return uo, oe
+
+
+def rtl_module():
+    pytest.importorskip("cocotb")
+    import test_isa_v2_rtl
+    return test_isa_v2_rtl
+
+
+def test_rtl_test_programs_and_expectations_agree_with_the_model():
+    rtl = rtl_module()
+    errs = []
+    for group, progs in rtl.group_programs().items():
+        for prog in progs:
+            uo, oe = model_pins(prog.words, prog.sched, prog.ui, prog.uio, prog.window)
+            errs += rtl.check_prog(prog, uo, oe)
+    assert errs == []
+
+
+@pytest.mark.parametrize("case", ["default", "0102", "0101", "0203", "1010", "2030", "3230"])
+def test_rtl_schedule_expectations_agree_with_the_model(case):
+    rtl = rtl_module()
+    sched, cpt = rtl.SCHEDULE_CASES[case]
+    errs = []
+    for name, src, turns, window in (("zoo1", rtl.ZOO1_SRC, rtl.ZOO1_TURNS, rtl.ZOO1_WINDOW),
+                                     ("zoo2", rtl.ZOO2_SRC, rtl.ZOO2_TURNS, rtl.ZOO2_WINDOW)):
+        uo, _ = model_pins(rtl.assemble(src), sched, 0, 0, window)
+        for t in range(4):
+            errs += rtl.check_period(uo, t, turns[t], cpt[t], f"{name} sched={sched}")
+    uo, _ = model_pins(rtl.assemble(rtl.SPACING_SRC), sched, 0, 0, rtl.SPACING_WINDOW)
+    errs += rtl.check_spacing(uo, cpt[0], "spacing")
+    assert errs == []
+
+
+@pytest.mark.parametrize("bad", [(0, 0, 1, 2), (0, 1, 2, 0), (1, 2, 3, 3), (1, 1, 1, 1), (3, 3, 3, 3)])
+def test_rtl_illegal_schedule_expectation_agrees_with_the_model(bad):
+    rtl = rtl_module()
+    cpt = rtl.SCHEDULE_CASES["default"][1]
+    uo, _ = model_pins(rtl.assemble(rtl.ZOO1_SRC), bad, 0, 0, rtl.ZOO1_WINDOW)
+    assert sum(rtl.check_period(uo, t, rtl.ZOO1_TURNS[t], cpt[t], "zoo1") == [] for t in range(4)) == 4
+
+
+def test_rtl_timing_expectations_agree_with_the_model():
+    rtl = rtl_module()
+    for sched, cpt in rtl.TIMING_CASES:
+        uo, _ = model_pins(rtl.assemble(rtl.TIMING_SRC), sched, 0, 0, rtl.TIMING_WINDOW)
+        assert rtl.check_timing(uo, cpt, f"timing sched={sched}") == []
+
+
+def test_rtl_schedule_without_thread_0():
+    rtl = rtl_module()
+    uo, _ = model_pins(rtl.assemble("PIN 1 1\nPIN 2 1\nSPAWN 1, 0\nHALT"), (1, 2, 1, 3), 0, 0, 400)
+    assert set(uo) == {0x01}
