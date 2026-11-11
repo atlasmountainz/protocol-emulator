@@ -10,6 +10,8 @@ model that checks the timing windows (`docs/verification.md`).
 |---|---|---|---|---|
 | `firmware/examples/i2c_target.asm` | I2C target (slave), address 0x2A, 100 and 400 kHz | 181 | `docs/examples-i2c-target.md` | `test_i2c_target.py` |
 | `firmware/examples/spi_target.asm` | SPI target (slave), modes 0 and 3, up to about 1.3 MHz | 252 | `docs/examples-spi-target.md` | `test_spi_target.py` |
+| `firmware/examples/spi_master_fast.asm` | SPI master, mode 0, 5 MHz SCK with the loadable schedule `0,1,0,2` (`spi_master_turbo.asm`: 8.33 MHz with two threads) | 93 | `docs/examples-fast-and-memory.md` | `test_spi_master_fast.py` |
+| `firmware/examples/i2c_target_regs.asm` | I2C target (slave), address 0x2A, 16 read/write registers in the data memory, 100 and 400 kHz | 84 | `docs/examples-fast-and-memory.md` | `test_i2c_target_regs.py` |
 | `firmware/examples/onewire.asm` | 1-Wire master: reset, READ ROM, CRC8 checked in firmware | 101 | `docs/examples-onewire-jtag.md` | `test_onewire_jtag.py` |
 | `firmware/examples/jtag.asm` | JTAG master: read IDCODE, load BYPASS, measure chain length | 94 | `docs/examples-onewire-jtag.md` | `test_onewire_jtag.py` |
 | `firmware/examples/ws2812.asm` | WS2812 LED strip driver, exact 800 kHz waveform from one thread | 90 | `docs/examples-leds-keyboard-midi.md` | `test_leds_keyboard_midi.py` |
