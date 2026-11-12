@@ -5,6 +5,8 @@ full-duplex UART echo). Everything below is firmware that the host loads over th
 program memory (`docs/loading.md`); none of it is in the ROM and none of it needed a hardware change. Each
 program has a cocotb test module that loads it through the real pin loader and drives it with a protocol
 model that checks the timing windows (`docs/verification.md`).
+The timing of the built-in protocols and of the WS2812, MIDI, 1-Wire and fast SPI programs is also proved for all
+executions by the static analyzer (`firmware/timing/*.timing`, `docs/timing-analysis.md`).
 
 | Program | Role | Words | Document | Tests |
 |---|---|---|---|---|

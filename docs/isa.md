@@ -208,7 +208,7 @@ Notes:
   `HALT` (`0xF000`), not zeros.
 - Programs are written in assembly (`firmware/*.asm`) and turned into `src/rom.v` by
   `tools/build_rom.sh`, which assembles `firmware/main.asm` (boot dispatcher), `uart_tx.asm`,
-  `spi_master.asm`, `i2c_master.asm`, `i2c_monitor.asm` and `echo.asm` into one ROM (158 words).
+  `spi_master.asm`, `i2c_master.asm`, `i2c_monitor.asm` and `echo.asm` into one ROM (162 words).
   Labels are global across files.
 - A lookup table without data memory: `ADD base; CALLA` into a run of `RETL v0`, `RETL v1`, ... returns
   `A = v[index]`.

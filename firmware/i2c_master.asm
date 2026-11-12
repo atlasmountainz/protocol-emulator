@@ -50,6 +50,7 @@ i2c_nack:
 
 ; START or repeated START. Works from idle (both lines high) or with SCL low.
 i2c_start:
+        WAIT 1                ; SDA must not change within 300 ns of SCL falling (UM10204): see firmware/timing/
         ODRV 3 1              ; release SDA
         WAIT 59
         ODRV 2 1              ; release SCL
@@ -63,6 +64,7 @@ i2c_st_w:
 
 ; STOP. Enter with SCL low.
 i2c_stop:
+        WAIT 1                ; SDA must not change within 300 ns of SCL falling (UM10204)
         ODRV 3 0              ; SDA low
         WAIT 59
         ODRV 2 1              ; release SCL
@@ -85,6 +87,7 @@ i2c_wb_w:
         JPIN 10 0 i2c_wb_w
         WAIT 59              ; SCL high time
         ODRV 2 0              ; SCL low
+        WAIT 1                ; SDA must not change within 300 ns of SCL falling (UM10204)
         DJNZ i2c_wb_bit
         ODRV 3 1              ; release SDA for the ACK bit
         WAIT 59
@@ -98,6 +101,7 @@ i2c_wb_aw:
 
 ; Read one byte into A (MSB first), then send NACK (it is the last byte).
 i2c_rd_byte:
+        WAIT 1                ; SDA must not change within 300 ns of SCL falling (UM10204)
         ODRV 3 1              ; release SDA so the slave can drive it
         LDX  8
 i2c_rb_bit:

@@ -1,0 +1,16 @@
+# The WS2812 driver example (firmware/examples/ws2812.asm), thread 0 (the waveform thread).
+# Limits: WS2812B datasheet, T0H 0.4 us, T1H 0.8 us, T0L 0.85 us, T1L 0.45 us, each +-150 ns.
+# A bit is 1 (long high, short low) or 0 (short high, long low), so the high time must be in one of the two
+# windows and the low time in the matching one. nonblocking: thread 1 always has a byte ready here (the latch gap
+# is thread 1's WAIT, outside this thread's bit timing).
+program ../examples/ws2812.asm
+thread 0
+start ws_next
+nonblocking
+init A=? X=? C=?
+event RISE = at ws_bit
+event FALL = out 2=0
+
+check RISE -> FALL in [250ns, 550ns] [650ns, 950ns]     # T0H or T1H
+check FALL -> RISE in [300ns, 600ns] [700ns, 1000ns]    # T1L or T0L
+check RISE -> RISE == 1.28us                             # every bit is the same length, even across a byte boundary

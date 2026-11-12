@@ -1,0 +1,10 @@
+# The MIDI transmitter example (firmware/examples/midi_tx.asm): 31250 baud, bit time 32 us.
+# MIDI 1.0 allows +-1 % on the data rate.
+program ../examples/midi_tx.asm
+start midi_send
+init A=? X=? C=?
+nonblocking
+event TX = out 0
+
+check TX -> TX == 32us
+check TX -> TX in [31.68us, 32.32us]

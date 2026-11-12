@@ -1,0 +1,8 @@
+# The ROM UART transmitter (firmware/uart_tx.asm), 115200 baud 8N1.
+# Every write to the TX pin is one bit time after the previous one, on every path and for every data byte.
+program ../main.asm ../uart_tx.asm ../spi_master.asm ../i2c_master.asm ../i2c_monitor.asm ../echo.asm   # exactly the ROM image (tools/build_rom.sh)
+start uart_send
+init A=? X=? C=?
+event TX = out 0
+check TX -> TX == 8.64us          # 432 clocks: 115740 baud, 0.5 % fast
+check TX -> TX in [8.4us, 8.9us]  # a +-3 % bit time is what 8N1 receivers tolerate over a frame

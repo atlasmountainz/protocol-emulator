@@ -1,0 +1,27 @@
+# The 1-Wire master example (firmware/examples/onewire.asm), thread 0 (the bus thread), standard speed.
+# Limits: Maxim 1-Wire standard-speed timing (AN126 / AN937): reset low >= 480 us, presence sampled while a
+# device is certain to hold the line (60..75 us after the release), write-1 low 1..15 us, write-0 low 60..120 us,
+# read low >= 1 us and sampled within 15 us of the falling edge, every slot 60..120 us.
+# nonblocking: thread 1 (the UART) always takes the byte at once here.
+program ../examples/onewire.asm
+thread 0
+start ow_start
+nonblocking
+init A=? X=? C=? 
+event RESET_LOW  = at ow_start+1
+event RESET_REL  = at ow_start+4
+event PRESENCE   = at ow_start+6                       # JPIN: sample DQ
+event SLOT       = at ow_wbit+1 | at ow_rbit           # the falling edge that starts a write / read slot
+event WR_FALL    = at ow_wbit+1
+event WR_RELEASE = release 0
+event RD_FALL    = at ow_rbit
+event RD_REL     = at ow_rbit+2
+event RD_SAMPLE  = at ow_rbit+5
+
+check RESET_LOW -> RESET_REL >= 480us                   # tRSTL
+check RESET_REL -> PRESENCE  in [60us, 75us]            # the presence pulse is certainly there
+check RESET_LOW -> WR_FALL   >= 960us                   # the whole reset slot before the first command bit
+check WR_FALL   -> WR_RELEASE in [1us, 15us] [60us, 120us]   # write-1 or write-0 low time
+check SLOT      -> SLOT      in [60us, 120us]           # every slot, write or read
+check RD_FALL   -> RD_REL    in [1us, 15us]             # read: master low time
+check RD_FALL   -> RD_SAMPLE <= 15us                    # read: sample within 15 us of the falling edge

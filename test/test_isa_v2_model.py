@@ -145,14 +145,17 @@ def test_labels_work_for_new_branches():
     assert words == [0x4102, 0x4400, 0xFD00]
 
 
-# Golden checksums of the words the version 1 assembler produced for the existing firmware (taken before
-# the v2 mnemonics were added): (number of words, CRC32 of the little-endian bytes).
+# Golden checksums of the assembled firmware: (number of words, CRC32 of the little-endian bytes). They were
+# first taken from the version 1 assembler before the v2 mnemonics were added, which is what shows that the
+# assembler still encodes the old mnemonics identically. Three entries have been renewed since, on purpose, for
+# firmware that was changed: jtag and onewire (rewritten with the v2 instructions) and rom (the I2C master got
+# four WAIT 1 for the 300 ns SDA hold, found by tools/timing.py). The other six are still the version 1 values.
 V1_FIRMWARE = {
-    "rom": (["main", "uart_tx", "spi_master", "i2c_master", "i2c_monitor", "echo"], 158, 0x55AFECD0),
+    "rom": (["main", "uart_tx", "spi_master", "i2c_master", "i2c_monitor", "echo"], 162, 0xEE45E529),
     "i2c_target": (["examples/i2c_target"], 181, 0x84A5FB57),
-    "jtag": (["examples/jtag"], 96, 0xFEE88503),
+    "jtag": (["examples/jtag"], 70, 0x7068B9B1),
     "midi_tx": (["examples/midi_tx"], 48, 0x5B26C938),
-    "onewire": (["examples/onewire"], 103, 0x3EC73ED8),
+    "onewire": (["examples/onewire"], 67, 0x7BE20F69),
     "ps2_rx": (["examples/ps2_rx"], 64, 0xC97B09C2),
     "spi_target": (["examples/spi_target"], 252, 0xC1A6CD64),
     "uart_rx": (["examples/uart_rx"], 29, 0x8912A972),

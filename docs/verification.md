@@ -92,15 +92,40 @@ ports compiled in under `ifdef FORMAL`, so the chip's RTL is unchanged.
   was found to be vacuous (the program memory had been folded into a constant ROM), which is why the check is
   kept.
 
-## 5. Hardware flow checks (CI)
+## 5. Static timing analysis of the firmware
+
+`tools/timing.py` proves protocol timing for every execution instead of sampling it: it explores all paths of a
+firmware (every pin input free, every data value unknown unless the program fixed it) and gives the exact minimum,
+maximum and set of times between two events, or reports a loop that depends on an input as unbounded. It is
+possible because a thread's time between two instructions depends only on the path it took (section 4, the
+pipeline and isolation proofs). The method, the specs (`firmware/timing/*.timing`), the results and the limits are
+in `docs/timing-analysis.md`. The analyzer is itself checked in six ways:
+
+| Module | Tests | Covers |
+|---|---|---|
+| `test/test_timing.py` (pure Python, about 7 s) | 26 | every one of the 65,536 instruction words: the pins written equal the model's; 60,000 random abstract steps against the model's step; 119 random programs (103 analysable) with 17,812 observed intervals inside the analysed ranges; the shipped specs hold; broken firmware (a short `WAIT`, a data-dependent extra instruction, the I2C hold delay removed) fails them; 8 deliberate bugs in the analyzer were each caught; hand-computed programs; `src/rom.v` equals the assembled firmware (162 words) and the ROM specs analyse that program |
+| `test/test_timing_rtl.py` (RTL only: `make COCOTB_TEST_MODULES=test_timing_rtl`) | 8 | the real RTL runs each firmware against a hostile I2C slave, a 1-Wire device and random data while every executed instruction is traced; all 3,610 intervals between the specs' events lie inside the analysed ranges and sets, and both ends of every bounded range are reached; a deliberately wrong cost model is caught |
+
+It found one real defect: the ROM I2C master could change SDA 160 ns after SCL fell. Four `WAIT 1` were added
+(158 to 162 ROM words) and the check now proves at least 320 ns on every path.
+
+## 6. Hardware flow checks (CI)
 
 Every push runs the Tiny Tapeout flow: synthesis, place and route at a 20 ns clock, timing in three corners,
 antenna, LVS and DRC, the precheck, and the cocotb suites `test.py` (17 tests of the ROM firmware),
 `test_isa_v2_rtl.py` (18 tests of the version-2 instructions and the thread schedules) and `test_spi_master_fast.py`
 (13 tests of the 5 MHz SPI master) on the gate-level netlist.
+A separate job runs the pure-Python tests (`python -m pytest test`, which includes the instruction-set model and the
+timing analyzer) and the RTL timing cross-check (`test_timing_rtl.py`); that module reads internal signals of the
+CPU, so it is not part of the gate-level run.
 
 ## What this does not cover
 
+- The timing analysis covers one thread at a time, with the channel assumed never to block, and it is about
+  instruction timing inside the chip, not pads, rise times or the input synchroniser. Cross-thread timing
+  (the WS2812 latch gap, the lock-step turbo SPI) is covered by simulation only. The limits it checks against come
+  from the standards and datasheets listed in `docs/timing-analysis.md`, several quoted from memory; they should be
+  compared with the document for the device actually used.
 - No analog or pad-level simulation; the I/O is checked only at the digital boundary.
 - The protocol models in the testbenches are written by the same author as the firmware. They are checked
   against the published timing parameters, but not against a physical device.

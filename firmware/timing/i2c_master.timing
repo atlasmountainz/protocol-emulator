@@ -1,0 +1,26 @@
+# The ROM I2C master (firmware/i2c_master.asm) against the I2C standard-mode (100 kHz) limits of
+# NXP UM10204 table 10. Every limit is checked on every path through a complete read transaction,
+# for any behaviour of the slave. SCL is open-drain on uio[2] (pin 2), SDA on uio[3] (pin 3).
+program ../main.asm ../uart_tx.asm ../spi_master.asm ../i2c_master.asm ../i2c_monitor.asm ../echo.asm   # exactly the ROM image (tools/build_rom.sh)
+start i2c_start_fw
+nonblocking
+init A=? X=? C=?
+
+event SCL_LOW  = pull 2                      # the master pulls SCL low
+event SCL_REL  = release 2                   # the master lets SCL go high
+event SDA_ANY  = od 3
+# the first instruction after each "wait until SCL is really high" loop: SCL has been seen high
+event SCL_SEEN = at i2c_st_w+1 | at i2c_sp_w+1 | at i2c_wb_w+1 | at i2c_wb_aw+1 | at i2c_rb_w+1 | at i2c_rb_nw+1
+event START_SDA = at i2c_st_w+2              # SDA falls while SCL is high: (repeated) START
+event STOP_SEEN = at i2c_sp_w+1
+event STOP_SDA  = at i2c_sp_w+2              # SDA rises while SCL is high: STOP
+event START_SEEN = at i2c_st_w+1
+
+check SCL_LOW   -> SCL_REL    >= 4.7us       # tLOW
+check SCL_SEEN  -> SCL_LOW    >= 4.0us       # tHIGH (counted from the moment SCL is seen high)
+check START_SEEN -> START_SDA >= 4.7us       # tSU;STA
+check START_SDA -> SCL_LOW    >= 4.0us       # tHD;STA
+check STOP_SEEN -> STOP_SDA   >= 4.0us       # tSU;STO
+check STOP_SDA  -> START_SDA  >= 4.7us       # tBUF
+check SDA_ANY   -> SCL_REL    >= 250ns       # tSU;DAT (data stable before SCL rises)
+check SCL_LOW   -> SDA_ANY    >= 300ns       # SDA hold after SCL falls: UM10204 asks for 300 ns to bridge the fall time

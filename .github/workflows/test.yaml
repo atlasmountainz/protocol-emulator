@@ -31,10 +31,25 @@ jobs:
           # make will return success even if the tests fail, so check results.xml for failed tests
           python -m cocotb_tools.check_results results.xml
 
+      # Pure Python: the instruction-set reference model, the assembler and the static timing analyzer
+      # (tools/timing.py, docs/timing-analysis.md), including a check that src/rom.v is the assembled firmware.
+      - name: Run Python tests
+        run: python -m pytest test/test_isa_v2_model.py test/test_timing.py -q
+
+      # The timing analyzer's ranges against the real RTL. It reads internal CPU signals, so it runs on the RTL only
+      # (it is not in the default list of test/Makefile, which is also run on the gate-level netlist).
+      - name: Run timing cross-check on the RTL
+        run: |
+          cd test
+          make COCOTB_TEST_MODULES=test_timing_rtl SIM_BUILD=sim_build/rtl_timing COCOTB_RESULTS_FILE=results_timing.xml
+          python -m cocotb_tools.check_results results_timing.xml
+
       - name: Test Summary
         uses: test-summary/action@v2.4
         with:
-          paths: "test/results.xml"
+          paths: |
+            test/results.xml
+            test/results_timing.xml
         if: always()
 
       - name: upload waveform and test results
@@ -45,4 +60,5 @@ jobs:
           path: |
             test/tb.fst
             test/results.xml
+            test/results_timing.xml
             test/output/*

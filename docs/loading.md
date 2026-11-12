@@ -63,7 +63,7 @@ longer does not write twice.
 - The memory has no reset. After power-up its contents are undefined, so always send the full 512 bytes.
   `tools/load_image.py` pads the image with `HALT` up to 256 words, so a program that runs off its end stops.
 - Everything else (instructions, pins, timing, all four threads) behaves as in `docs/isa.md`. Firmware assembled for
-  the ROM can be loaded unchanged: the whole ROM image (158 words) is loaded in one piece by the tests
+  the ROM can be loaded unchanged: the whole ROM image (162 words) is loaded in one piece by the tests
   (`FROM_RAM=1`, see `test/test.py`, `firmware_image`) and behaves identically.
 
 ## Building an image

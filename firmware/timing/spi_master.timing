@@ -1,0 +1,21 @@
+# The ROM SPI master (firmware/spi_master.asm), mode 0, 16-bit frames, about 1 MHz.
+# Limits are representative of a 3.3 V SPI EEPROM / flash / ADC class part (not one specific datasheet):
+# clock high and low >= 100 ns, data setup / hold >= 50 ns, chip-select setup / hold >= 100 ns.
+program ../main.asm ../uart_tx.asm ../spi_master.asm ../i2c_master.asm ../i2c_monitor.asm ../echo.asm   # exactly the ROM image (tools/build_rom.sh)
+start spi_start
+nonblocking
+event SCK_RISE = out 1=1
+event SCK_FALL = out 1=0
+event MOSI     = out 2
+event CS_ON    = out 0=0
+event CS_OFF   = out 0=1
+event FRAME_END = out 0=1 | at spi_idle      # the end of a frame, or the idle wait before one
+
+check SCK_RISE -> SCK_FALL >= 100ns      # clock high time
+check SCK_FALL -> SCK_RISE >= 100ns      # clock low time
+check MOSI     -> SCK_RISE >= 50ns       # data setup before the sampling edge
+check SCK_RISE -> MOSI     >= 50ns       # data hold after the sampling edge
+check CS_ON    -> SCK_RISE >= 100ns      # chip-select setup
+check SCK_FALL -> CS_OFF   >= 100ns      # chip-select hold
+check SCK_RISE -> SCK_RISE == 960ns avoid FRAME_END      # 12 turns per bit, every bit of a frame (about 1.04 MHz)
+check SCK_FALL -> SCK_RISE == 560ns avoid FRAME_END
