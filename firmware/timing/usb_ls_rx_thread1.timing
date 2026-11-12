@@ -1,0 +1,19 @@
+# Low-speed USB receiver (firmware/examples/usb_ls_rx.asm), thread 1 = the protocol thread, schedule 0,1,0,1.
+# It must be back in RECV before thread 0's next SEND, whatever the byte, the packet type or the state of its memory
+# (memory is unknown here, so every branch of every handler is possible). nonblocking: RECV never waits.
+program ../examples/usb_ls_rx.asm
+thread 1
+sched 0,1,0,1
+start t1_main
+nonblocking
+init A=? X=? C=?
+event LOOP    = at t1_main
+event EVENT   = at t1_event
+event STB_LOW = pull 0 | pull 1
+event STB_HIGH = release 0 | release 1
+
+# One message (a byte or an event) is handled in at most 69 turns = 2.76 us; an event alone in 37.
+check LOOP -> LOOP <= 2.8us
+check EVENT -> LOOP <= 1.5us
+# Both report strobes are low for exactly 4 turns = 160 ns.
+check STB_LOW -> STB_HIGH == 160ns

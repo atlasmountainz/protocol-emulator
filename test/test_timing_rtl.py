@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 import timing  # noqa: E402
 from test_onewire_jtag import OneWireSlave, make_rom  # noqa: E402
+import usb_ls  # noqa: E402
 
 SPECS = ROOT / "firmware" / "timing"
 HALT = 0xF000
@@ -311,6 +312,54 @@ async def test_onewire_loaded(dut):
     pairs = verify(an, trace, dut._log)
     dut._log.info(f"onewire.timing: {len(trace)} instructions traced, {pairs} intervals compared")
     assert pairs >= 150, pairs
+
+
+USB_PULLUPS = 0xCF      # uio[7:6] and uio[3:0] pulled up; uio[5:4] are the loader pins and stay low
+
+
+async def usb_bus(dut, rng, packets=16):
+    """A low-speed USB host: random tokens, data packets and handshakes back to back, bit rate off by up to
+    +-1.5 %, edge jitter, D+ / D- skew; the uio pads read back the chip's open-drain pull-downs."""
+    bursts, t = [], 0
+    for i in range(packets):
+        kind = ["data", "token", "data", "hs", "token"][i % 5]        # the first one has a wrong CRC16
+        if kind == "token":
+            p = usb_ls.token(rng.choice([usb_ls.OUT, usb_ls.IN, usb_ls.SETUP]), rng.randrange(128), rng.randrange(16))
+        elif kind == "hs":
+            p = usb_ls.handshake(rng.choice(usb_ls.HANDSHAKES))
+        else:
+            p = usb_ls.data_packet(rng.choice(usb_ls.DATA), bytes(rng.choice([0xFF, 0, rng.randrange(256)])
+                                                                  for _ in range(rng.randrange(9))))
+        if kind != "hs" and (i == 0 or i % 5 == 4):                   # a wrong CRC: the handler's other branch
+            b = bytearray(p)
+            b[rng.randrange(1, len(b))] ^= 1 << rng.randrange(8)
+            p = bytes(b)
+        syms = usb_ls.packet_symbols(p)
+        bursts.append((t, syms))
+        t += int(len(syms) * usb_ls.CLOCKS_PER_BIT * 1.01) + rng.randrange(20, 300)
+    bus = usb_ls.Bus([(s + 300, sy) for s, sy in bursts], ppm=rng.choice([-15000, -5000, 0, 8000, 15000]),
+                     jitter=1.5, skew=rng.choice([0, 2]), rng=rng)
+    for c in range(bus.end_clock() + 400):
+        dp, dm = bus.level(c)
+        dut.ui_in.value = dp | (dm << 1)
+        await RisingEdge(dut.clk)
+        pulled = int(dut.uio_oe.value) & ~int(dut.uio_out.value) & 0xFF
+        dut.uio_in.value = USB_PULLUPS & ~pulled
+
+
+@cocotb.test()
+async def test_usb_ls_rx_thread0_loaded(dut):
+    """The low-speed USB receiver's window schedule (13 turns after an edge, 8 after the last poll without one,
+    17 per bit) on the chip, against random traffic."""
+    await run_scenario(dut, "usb_ls_rx.timing", 62000, None, [usb_bus], sched=(0, 1, 0, 1), loaded=True,
+                       uio0=USB_PULLUPS)
+
+
+@cocotb.test()
+async def test_usb_ls_rx_thread1_loaded(dut):
+    """Thread 1 of the same receiver: every message handled within the proven 69 turns, strobes 160 ns."""
+    await run_scenario(dut, "usb_ls_rx_thread1.timing", 62000, None, [usb_bus], sched=(0, 1, 0, 1), loaded=True,
+                       uio0=USB_PULLUPS)
 
 
 @cocotb.test()

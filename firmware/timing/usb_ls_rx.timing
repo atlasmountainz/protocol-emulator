@@ -1,0 +1,36 @@
+# Low-speed USB receiver (firmware/examples/usb_ls_rx.asm), thread 0 = the line receiver, schedule 0,1,0,1
+# (one instruction every 40 ns). One USB bit is 666.67 ns = 16.67 turns. nonblocking: thread 1 has always taken the
+# previous byte (its own spec, usb_ls_rx_thread1.timing, proves it).
+program ../examples/usb_ls_rx.asm
+thread 0
+sched 0,1,0,1
+start listen
+nonblocking
+init A=? X=? C=?
+event J_EDGE = at j_edge
+event K_EDGE = at k_edge
+event J_WIN  = at j_win
+event K_WIN  = at k_win
+event J_NE   = at j_ne
+event K_NE   = at k_ne
+event LEAVE  = at idle | at err_stuff | at se0_j | at se0_k | at se0_bad
+
+# After an edge the next window of nine polls starts exactly 13 turns after the poll that saw it, whatever the
+# data, the byte boundary or the stuffing (the instruction after the poll is turn 1).
+check J_EDGE -> K_WIN == 12 turns avoid LEAVE
+check K_EDGE -> J_WIN == 12 turns avoid LEAVE
+# After a bit without an edge it starts 9 turns after the last poll; with the nine polls that is 17 turns per bit.
+check J_NE -> J_WIN == 8 turns avoid LEAVE
+check K_NE -> K_WIN == 8 turns avoid LEAVE
+# A window is nine polls one turn apart.
+check J_WIN -> J_NE == 9 turns avoid J_EDGE
+check K_WIN -> K_NE == 9 turns avoid K_EDGE
+
+# Hand-over to thread 1 through the one-byte mailbox (thread 1's handler takes at most 69 turns, see
+# usb_ls_rx_thread1.timing): SEND must find the mailbox empty. Reported here, composed in docs/usb-low-speed.md.
+event BYTE_SEND = at j_full0 | at j_full1 | at k_full0 | at k_full1
+event EV_SEND   = at event+3
+report BYTE_SEND -> BYTE_SEND
+report BYTE_SEND -> EV_SEND
+report EV_SEND -> BYTE_SEND
+report EV_SEND -> EV_SEND

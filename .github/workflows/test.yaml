@@ -34,7 +34,7 @@ jobs:
       # Pure Python: the instruction-set reference model, the assembler and the static timing analyzer
       # (tools/timing.py, docs/timing-analysis.md), including a check that src/rom.v is the assembled firmware.
       - name: Run Python tests
-        run: python -m pytest test/test_isa_v2_model.py test/test_timing.py -q
+        run: python -m pytest test/test_isa_v2_model.py test/test_timing.py test/test_usb_ls_model.py test/test_usb_ls_rx_model.py -q
 
       # The timing analyzer's ranges against the real RTL. It reads internal CPU signals, so it runs on the RTL only
       # (it is not in the default list of test/Makefile, which is also run on the gate-level netlist).

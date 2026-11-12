@@ -61,6 +61,7 @@ the minimum equals the maximum.
 | WS2812 driver | T0H / T1H, T0L / T1L within ±150 ns of the WS2812B datasheet | high `{320, 720}` ns, low `{560, 960}` ns, bit period exactly 1.28 µs, across byte boundaries too |
 | MIDI transmitter | bit time 32 µs ±1 % | exact: 400 turns |
 | 1-Wire master | reset ≥ 480 µs, presence sampled 60 to 75 µs after release, write-1 low 1..15 µs / write-0 low 60..120 µs, read low 1..15 µs and sampled ≤ 15 µs after the falling edge, every slot 60..120 µs | reset 500.3 µs, sample 70.08 µs, low `{6, 65.12}` µs, read low 6 µs, sample 12.08 µs, slots 69.04 to 70.4 µs |
+| Low-speed USB receiver (`docs/usb-low-speed.md`), schedule `0,1,0,1` | the window of nine polls starts exactly 13 turns after the poll that saw an edge and 9 after the last poll without one, for every bit sequence, byte boundary and stuffed bit; thread 1 answers every message within the time between two bytes | 12 turns after an edge, 8 after none, polls one turn apart, 17 turns per bit, on every path; thread 1 at most 69 turns per message, strobes exactly 160 ns |
 | 5 MHz SPI master (fast schedule) | the claims in the file header | SCK period 200 ns (5 turns of 40 ns), high 80 ns, low 120 ns, MOSI setup 40 ns, CS_N 3 turns before the first and after the last SCK edge |
 
 ## What it found
@@ -103,9 +104,9 @@ An unsound analyzer is worse than none, so it is tested against the reference mo
    runs each firmware against hostile or random inputs (a stretching, randomly ACKing and NACKing I2C slave, a
    1-Wire device, random MISO and data, ...) while the testbench records which instruction the thread executes at
    every clock. Every interval between two events in the trace lies in the analyzer's range and in its exact set.
-   About 3,600 intervals are compared (UART 180, SPI 896, I2C 248, WS2812 1,364, fast SPI 640, MIDI 72, 1-Wire 210).
+   About 5,100 intervals are compared (UART 180, SPI 896, I2C 256, WS2812 1,364, fast SPI 640, MIDI 72, 1-Wire 210, USB receiver 1,513).
    For every bounded range in these runs both ends are attained by the RTL (I2C tLOW 62 to 67 turns, WS2812 4 to 9
-   and 7 to 12 turns, SPI hold 8 to 11, 1-Wire exact), so the ranges are tight, not merely safe. With a wrong cost
+   and 7 to 12 turns, SPI hold 8 to 11, 1-Wire exact, USB window 12 / 8 / 9 turns exact and thread 1 up to 69), so the ranges are tight, not merely safe. With a wrong cost
    for `WAIT` in the analyzer the comparison fails.
 
 The chain is: formal proofs (one instruction per turn, isolation) → RTL equals the model (random differential
@@ -125,7 +126,7 @@ RTL does (6).
   (a pin change reaches the thread a few clocks late, as the docs say) are outside it.
 - State-space: firmware that keeps much known data in registers and memory (a CRC over every byte value) can exceed
   the 3,000,000 abstract states and the tool stops with an error instead of answering. Data memory starts
-  unknown by default (`mem zero` is the opt-in), which is what keeps the shipped specs between 39 and 53,032 states.
+  unknown by default (`mem zero` is the opt-in), which is what keeps the shipped specs between 39 and 393,309 states.
 - The protocol limits in the specs come from: the WS2812B datasheet (T0H 0.4 µs, T1H 0.8 µs, T0L 0.85 µs,
   T1L 0.45 µs, each ±150 ns; checked against the datasheet text), standard-mode I2C (the
   minimums 4.7 / 4.0 / 4.7 / 4.0 / 4.0 / 4.7 µs and 250 ns were checked against a vendor datasheet's copy of the
