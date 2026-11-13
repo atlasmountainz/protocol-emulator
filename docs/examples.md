@@ -5,7 +5,7 @@ full-duplex UART echo). Everything below is firmware that the host loads over th
 program memory (`docs/loading.md`); none of it is in the ROM and none of it needed a hardware change. Each
 program has a cocotb test module that loads it through the real pin loader and drives it with a protocol
 model that checks the timing windows (`docs/verification.md`).
-The timing of the built-in protocols and of the WS2812, MIDI, 1-Wire, fast SPI and USB receiver programs is also proved for all
+The timing of the built-in protocols and of the WS2812, MIDI, 1-Wire, fast SPI, USB receiver, SWD and CAN programs is also proved for all
 executions by the static analyzer (`firmware/timing/*.timing`, `docs/timing-analysis.md`).
 
 | Program | Role | Words | Document | Tests |
@@ -20,6 +20,8 @@ executions by the static analyzer (`firmware/timing/*.timing`, `docs/timing-anal
 | `firmware/examples/ps2_rx.asm` | PS/2 keyboard receiver, forwards scan codes to the UART | 64 | `docs/examples-leds-keyboard-midi.md` | `test_leds_keyboard_midi.py` |
 | `firmware/examples/midi_tx.asm` | MIDI output, 31250 baud, running-status sequence | 48 | `docs/examples-leds-keyboard-midi.md` | `test_leds_keyboard_midi.py` |
 | `firmware/examples/usb_ls_rx.asm` | Low-speed USB (1.5 Mbit/s) receiver: NRZI, bit unstuffing, PID, CRC5 and CRC16 checks, schedule `0,1,0,1` | 246 | `docs/usb-low-speed.md` | `test_usb_ls_rx_model.py`, `test_usb_ls_rx_rtl.py` |
+| `firmware/examples/swd.asm` | SWD host: line reset, JTAG-to-SWD, read DPIDR, power up the debug domain; parity in firmware, WAIT retried | 173 | `docs/examples-swd-can.md` | `test_swd_model.py`, `test_swd_can_rtl.py` |
+| `firmware/examples/can_rx.asm` | CAN 2.0A receiver at 500 kbit/s: destuffing, CRC-15, acknowledges good frames in the ACK slot, listen-only mode, schedule `0,1,0,1` | 192 | `docs/examples-swd-can.md` | `test_can_model.py`, `test_swd_can_rtl.py` |
 | `firmware/examples/uart_rx.asm` | UART receiver | 29 | `docs/loading.md` | `test_example_uart_receiver` in `test.py` |
 
 Two of these are controller roles that the ROM already had (SPI, I2C master); the I2C and SPI targets show
@@ -29,7 +31,8 @@ the other side of the same buses on the same hardware.
 
 - **Pull-ups.** The I2C target needs pull-ups on SDA and SCL (as any I2C bus does) and the 1-Wire example needs
   one on the data line (as any 1-Wire bus does). The USB receiver needs one on each of `uio[0]`, `uio[1]` and `uio[2]`
-  (`docs/usb-low-speed.md`). Nothing else: the 1-Wire and JTAG programs use no scratch pads, only
+  (`docs/usb-low-speed.md`), SWD one on SWDIO, and the CAN receiver one on each of the five pads it uses
+  (`docs/examples-swd-can.md`); the CAN receiver also needs a transceiver. Nothing else: the 1-Wire and JTAG programs use no scratch pads, only
   the pins of their protocol, and the test checks that the chip drives no other pad.
 - **Pin conflicts.** `uio[5]` and `uio[4]` are the loader's LOAD and STROBE and are never used by a program.
 - **Instruction set version.** Version 2 of the instruction set (`docs/isa.md`) added an ALU, branches on data

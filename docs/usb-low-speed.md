@@ -98,7 +98,7 @@ away. Thread 0 can be made to wait only by two end-of-packet events less than 69
 a glitch of K and SE0 straight after an end of packet); a legal packet is at least 19 bits, 316 turns, long.
 
 The same specs are checked against the RTL: `test/test_timing_rtl.py` runs the receiver on the chip against random
-packets with jitter and a skewed rate, and every interval (1,317 for thread 0, 196 for thread 1) is inside the proved
+packets with jitter and a skewed rate, and every interval (1,195 for thread 0, 222 for thread 1) is inside the proved
 range; the window intervals are exactly 12, 8 and 9 turns and the slowest message takes exactly 69 turns.
 
 ## Tolerance

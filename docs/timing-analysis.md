@@ -32,6 +32,12 @@ instruction (`at LABEL+N`), or an alternative of several (`a | b`). A check comp
 An unknown value never makes a result unsound: a write whose value is unknown counts as "may" for minimums and
 is ignored for maximums, so the range always contains what the machine can really do.
 
+A program that computes with data that its timing does not depend on (a CRC register, a byte being assembled) would
+make the tool follow every value of that data. `forget A X C mem at LABEL` tells it to treat the listed registers or
+the data memory as unknown whenever the thread reaches that instruction. Unknown covers every value, so this can only
+widen a result, never make it wrong; if the timing did depend on the forgotten data, the checks would fail instead of
+passing. The CAN receiver's spec uses it at the start of every bit window (`firmware/timing/can_rx.timing`).
+
 ## Using it
 
 A spec lists the firmware, the thread and schedule (which give the clocks per turn: 4, or 2 for a thread that owns
@@ -62,6 +68,8 @@ the minimum equals the maximum.
 | MIDI transmitter | bit time 32 µs ±1 % | exact: 400 turns |
 | 1-Wire master | reset ≥ 480 µs, presence sampled 60 to 75 µs after release, write-1 low 1..15 µs / write-0 low 60..120 µs, read low 1..15 µs and sampled ≤ 15 µs after the falling edge, every slot 60..120 µs | reset 500.3 µs, sample 70.08 µs, low `{6, 65.12}` µs, read low 6 µs, sample 12.08 µs, slots 69.04 to 70.4 µs |
 | Low-speed USB receiver (`docs/usb-low-speed.md`), schedule `0,1,0,1` | the window of nine polls starts exactly 13 turns after the poll that saw an edge and 9 after the last poll without one, for every bit sequence, byte boundary and stuffed bit; thread 1 answers every message within the time between two bytes | 12 turns after an edge, 8 after none, polls one turn apart, 17 turns per bit, on every path; thread 1 at most 69 turns per message, strobes exactly 160 ns |
+| SWD host (`docs/examples-swd-can.md`) | SWCLK phases, SWDIO set-up with an open-drain line, the sampling point; nothing assumed about the target's answers or the UART | SWCLK high exactly 960 ns, low ≥ 1.36 µs, host bit set up 1.12 to 1.76 µs before the rising edge and never moved while SWCLK is high, target bit read exactly 1 turn before a rising edge |
+| CAN receiver at 500 kbit/s (`docs/examples-swd-can.md`), schedule `0,1,0,1` | the window of 13 polls re-aligns on every edge and the ACK is one bit long in the ACK slot, for every bit sequence and CRC value | next window exactly 44 turns after the poll that saw an edge, exactly 50 turns per bit without one; ACK exactly 2 µs, starting exactly 99 turns (149 with a stuff bit after the CRC) after the poll that saw the last CRC bit begin; thread 1 at most 42 turns per message |
 | 5 MHz SPI master (fast schedule) | the claims in the file header | SCK period 200 ns (5 turns of 40 ns), high 80 ns, low 120 ns, MOSI setup 40 ns, CS_N 3 turns before the first and after the last SCK edge |
 
 ## What it found
@@ -99,14 +107,17 @@ An unsound analyzer is worse than none, so it is tested against the reference mo
    specs pass, and broken firmware (one `WAIT` too short, a data-dependent extra instruction, the I2C hold fix
    removed) makes them fail.
 5. **Hand-computed programs** (counted loop 20 turns, branch `{3, 5}`, spin loop unbounded, a two-slot thread's
-   turn being 2 clocks).
+   turn being 2 clocks), and `forget`: on random programs with random places to forget at, every range computed
+   with it contains the range computed without it.
 6. **Against the RTL** (`test/test_timing_rtl.py`, `make COCOTB_TEST_MODULES=test_timing_rtl`). The real chip
    runs each firmware against hostile or random inputs (a stretching, randomly ACKing and NACKing I2C slave, a
    1-Wire device, random MISO and data, ...) while the testbench records which instruction the thread executes at
    every clock. Every interval between two events in the trace lies in the analyzer's range and in its exact set.
-   About 5,100 intervals are compared (UART 180, SPI 896, I2C 256, WS2812 1,364, fast SPI 640, MIDI 72, 1-Wire 210, USB receiver 1,513).
+   8,905 intervals are compared (UART 180, SPI 896, I2C 284, WS2812 1,364, fast SPI 640, MIDI 72, 1-Wire 210,
+   USB receiver 1,417, SWD host 2,065, CAN receiver 1,777); the stimulus seeds are fixed, so the numbers repeat.
    For every bounded range in these runs both ends are attained by the RTL (I2C tLOW 62 to 67 turns, WS2812 4 to 9
-   and 7 to 12 turns, SPI hold 8 to 11, 1-Wire exact, USB window 12 / 8 / 9 turns exact and thread 1 up to 69), so the ranges are tight, not merely safe. With a wrong cost
+   and 7 to 12 turns, SPI hold 8 to 11, 1-Wire exact, USB window 12 / 8 / 9 turns exact and thread 1 up to 69, SWD set-up 14 to 22 turns,
+   CAN windows 43 / 13 / 37 turns exact, the ACK 50, thread 1 up to 42), so the ranges are tight, not merely safe. With a wrong cost
    for `WAIT` in the analyzer the comparison fails.
 
 The chain is: formal proofs (one instruction per turn, isolation) → RTL equals the model (random differential
@@ -126,7 +137,8 @@ RTL does (6).
   (a pin change reaches the thread a few clocks late, as the docs say) are outside it.
 - State-space: firmware that keeps much known data in registers and memory (a CRC over every byte value) can exceed
   the 3,000,000 abstract states and the tool stops with an error instead of answering. Data memory starts
-  unknown by default (`mem zero` is the opt-in), which is what keeps the shipped specs between 39 and 393,309 states.
+  unknown by default (`mem zero` is the opt-in), and `forget` drops data that timing does not depend on; the shipped
+  specs have between 39 and 603,908 states.
 - The protocol limits in the specs come from: the WS2812B datasheet (T0H 0.4 µs, T1H 0.8 µs, T0L 0.85 µs,
   T1L 0.45 µs, each ±150 ns; checked against the datasheet text), standard-mode I2C (the
   minimums 4.7 / 4.0 / 4.7 / 4.0 / 4.0 / 4.7 µs and 250 ns were checked against a vendor datasheet's copy of the

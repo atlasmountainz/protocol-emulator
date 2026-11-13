@@ -1,0 +1,53 @@
+# CAN receiver (firmware/examples/can_rx.asm), thread 0 = the line receiver, schedule 0,1,0,1 (one instruction every
+# 40 ns). One bit at 500 kbit/s is 2 us = 50 turns. nonblocking: thread 1 has always taken the previous chunk (its own
+# spec, can_rx_thread1.timing, bounds its handler; the composition is in docs/examples-swd-can.md).
+# The chunk register and the CRC are data that timing must not depend on: `forget` makes them unknown at the start of
+# every window, so the proof covers every bit sequence, every chunk boundary and every CRC value at once.
+program ../examples/can_rx.asm
+thread 0
+sched 0,1,0,1
+start cn_wait_idle
+nonblocking
+init A=? X=? C=?
+forget A X C mem at r_win
+forget A X C mem at d_win
+event SOF    = at cn_listen+1
+event R_WIN  = at r_win
+event D_WIN  = at d_win
+event R_NE   = at r_ne
+event D_NE   = at d_ne
+event R_EDGE = at r_edge
+event D_EDGE = at d_edge
+event ANY_WIN = at r_win | at d_win
+event LEAVE  = at six_r | at six_d | at ev_crc | at ack1-2
+event ACK_LOW  = pull 3
+event ACK_HIGH = release 3
+
+# After an edge the next window of 13 polls starts exactly 44 turns after the poll that saw it (the instruction after
+# that poll is turn 1), whatever the bit, the stuffing, the chunk boundary or the CRC: the middle poll of that window
+# is 50 turns = one bit after the poll that saw the edge.
+check R_EDGE -> D_WIN == 43 turns avoid LEAVE
+check D_EDGE -> R_WIN == 43 turns avoid LEAVE
+check SOF    -> D_WIN == 43 turns
+# After a bit without an edge the next window starts exactly 50 turns after this one.
+check R_WIN -> R_NE == 13 turns avoid R_EDGE
+check D_WIN -> D_NE == 13 turns avoid D_EDGE
+check R_NE -> R_WIN == 37 turns avoid LEAVE
+check D_NE -> D_WIN == 37 turns avoid LEAVE
+# The ACK is exactly one bit long.
+check ACK_LOW -> ACK_HIGH == 2us
+# From the bit that completes the frame to the ACK, with no window in between: 99 turns after the poll that saw its
+# edge (149 if a stuff bit follows the CRC), 93 or 143 after the last poll of a window without an edge, which is
+# 99 or 149 turns after the middle of that window.
+check R_EDGE -> ACK_LOW in [98 turns, 98 turns] [148 turns, 148 turns] avoid ANY_WIN
+check D_EDGE -> ACK_LOW in [98 turns, 98 turns] [148 turns, 148 turns] avoid ANY_WIN
+check R_NE   -> ACK_LOW in [92 turns, 92 turns] [142 turns, 142 turns] avoid ANY_WIN
+check D_NE   -> ACK_LOW in [92 turns, 92 turns] [142 turns, 142 turns] avoid ANY_WIN
+
+# Hand-over to thread 1 through the one-byte mailbox: SEND must find it empty.
+event CHUNK = at chunk
+event EV    = at ev+3
+report CHUNK -> CHUNK
+report CHUNK -> EV
+report EV -> CHUNK
+report EV -> EV

@@ -44,4 +44,8 @@ jobs:
       pages: write # to deploy to Pages
       id-token: write # to verify the deployment originates from an appropriate source
     steps:
+      # The 3D viewer is published on GitHub Pages. It is a convenience, not part of the sign-off: if Pages is
+      # not enabled for the repository this step fails, and that must not turn a passing GDS / precheck /
+      # gate-level run red.
       - uses: TinyTapeout/tt-gds-action/viewer@ttihp27a
+        continue-on-error: true

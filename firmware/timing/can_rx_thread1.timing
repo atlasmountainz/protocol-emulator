@@ -1,0 +1,19 @@
+# CAN receiver (firmware/examples/can_rx.asm), thread 1 = the protocol thread, schedule 0,1,0,1.
+# It must be back in RECV before thread 0's next SEND, and it must pull LAST low well before the last chunk ends,
+# whatever the chunk and the state of its memory (unknown here, so every branch is possible). nonblocking: RECV
+# never waits.
+program ../examples/can_rx.asm
+thread 1
+sched 0,1,0,1
+start t1_main
+nonblocking
+init A=? X=? C=?
+event LOOP     = at t1_main
+event TAKEN    = at t1_main+1                    # the instruction after RECV
+event STB_LOW  = pull 0 | pull 1
+event STB_HIGH = release 0 | release 1
+event LAST     = pull 6
+
+check LOOP  -> LOOP <= 42 turns                  # one message is handled in less than the shortest bit (44 turns)
+check TAKEN -> LAST <= 42 turns avoid LOOP       # when LAST is set, it is set within the handler of that chunk
+check STB_LOW -> STB_HIGH == 160ns               # both report strobes: exactly 4 turns

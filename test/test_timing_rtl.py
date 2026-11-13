@@ -34,6 +34,9 @@ sys.path.insert(0, str(ROOT / "tools"))
 import timing  # noqa: E402
 from test_onewire_jtag import OneWireSlave, make_rom  # noqa: E402
 import usb_ls  # noqa: E402
+import can  # noqa: E402
+import swd  # noqa: E402
+import zlib  # noqa: E402
 
 SPECS = ROOT / "firmware" / "timing"
 HALT = 0xF000
@@ -227,7 +230,7 @@ async def i2c_bus(dut, rng, mode, start_hold, rounds):
 
 async def run_scenario(dut, spec_name, clocks, setup, drivers, log_name=None, sched=None, loaded=False, uio0=0):
     an = timing.Analysis(SPECS / spec_name)
-    rng = random.Random(hash(spec_name) & 0xFFFF)
+    rng = random.Random(zlib.crc32(spec_name.encode()) + SEEDS.get(spec_name, 0))    # the same stimulus in every run
     trace, tasks = [], []
 
     def go():
@@ -314,6 +317,9 @@ async def test_onewire_loaded(dut):
     assert pairs >= 150, pairs
 
 
+# Stimulus seeds are fixed, so every run compares the same intervals. The I2C bus is random (a slave that stretches
+# and acknowledges at random): this seed is one for which both ends of the proved tLOW range occur.
+SEEDS = {"i2c_master.timing": 1}
 USB_PULLUPS = 0xCF      # uio[7:6] and uio[3:0] pulled up; uio[5:4] are the loader pins and stay low
 
 
@@ -359,6 +365,65 @@ async def test_usb_ls_rx_thread0_loaded(dut):
 async def test_usb_ls_rx_thread1_loaded(dut):
     """Thread 1 of the same receiver: every message handled within the proven 69 turns, strobes 160 ns."""
     await run_scenario(dut, "usb_ls_rx_thread1.timing", 62000, None, [usb_bus], sched=(0, 1, 0, 1), loaded=True,
+                       uio0=USB_PULLUPS)
+
+
+async def swd_wire(dut, rng):
+    """A debug port on SWCLK / SWDIO that says WAIT a few times and sends one wrong parity bit."""
+    target = swd.SwdTarget(dpidr=rng.getrandbits(32) | 1, waits={1: 2, 3: 1}, bad_parity_at=0)
+    wire = swd.Wire(target)
+    c = 0
+    while True:
+        dut.uio_in.value = (USB_PULLUPS & ~1) | wire.level()
+        await RisingEdge(dut.clk)
+        low = int(dut.uio_oe.value) & ~int(dut.uio_out.value) & 0xFF
+        wire.step(c, (int(dut.uo_out.value) >> 2) & 1, low & 1)
+        c += 1
+
+
+@cocotb.test()
+async def test_swd_loaded(dut):
+    """The SWD host against a debug-port model: SWCLK phases, SWDIO set-up and hold, the sampling point."""
+    await run_scenario(dut, "swd.timing", 120000, None, [swd_wire], loaded=True, uio0=USB_PULLUPS)
+
+
+async def can_bus(dut, rng, frames=14):
+    """A CAN bus at 500 kbit/s: random frames back to back, some with a wrong CRC, an error flag, a stuff bit after
+    the CRC; bit rate off by up to +-1.5 %, edge jitter; the chip's TXD comes back through a transceiver delay."""
+    bursts, t = [], 1200
+    ppm = rng.choice([-15000, -5000, 0, 8000, 15000])
+    for i in range(frames):
+        f = can.random_frame(rng)
+        if i == 3:
+            f = can.Frame(f.ident, rtr=1, dlc=12)                     # remote and DLC above 8: the longest handler path
+        if i % 5 == 1:
+            f = can.Frame(f.ident, f.data, rtr=f.rtr, dlc=f.dlc, crc_xor=1 << rng.randrange(15))
+        w = f.wire() if i % 7 != 4 else f.stuffed[:rng.randrange(8, len(f.stuffed) - 8)] + [0] * 6 + [1] * 11
+        bursts.append((t, w))
+        t += int(len(w) * can.BIT_CLOCKS * (1 + ppm * 1e-6)) + 1 + rng.choice([0, 0, 150])
+    bus = can.Bus(bursts, ppm=ppm, jitter=1.5, rng=rng)
+    echo = [0] * 6
+    c = 0
+    while True:
+        low = int(dut.uio_oe.value) & ~int(dut.uio_out.value) & 0xFF
+        echo.append((low >> 3) & 1)
+        dut.ui_in.value = bus.level(c) & (1 - echo[-6])
+        dut.uio_in.value = USB_PULLUPS & ~low
+        await RisingEdge(dut.clk)
+        c += 1
+
+
+@cocotb.test()
+async def test_can_rx_thread0_loaded(dut):
+    """The CAN receiver's window schedule (44 turns after an edge, 50 per bit) and its ACK timing on the chip."""
+    await run_scenario(dut, "can_rx.timing", 110000, None, [can_bus], sched=(0, 1, 0, 1), loaded=True,
+                       uio0=USB_PULLUPS)
+
+
+@cocotb.test()
+async def test_can_rx_thread1_loaded(dut):
+    """Thread 1 of the same receiver: every message handled within the proven 42 turns, strobes 160 ns."""
+    await run_scenario(dut, "can_rx_thread1.timing", 110000, None, [can_bus], sched=(0, 1, 0, 1), loaded=True,
                        uio0=USB_PULLUPS)
 
 

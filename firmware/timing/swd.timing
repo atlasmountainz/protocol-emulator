@@ -1,0 +1,22 @@
+# The SWD host example (firmware/examples/swd.asm), thread 0, default schedule (80 ns per turn).
+# SEND may block here (the UART is much slower than the wire): that only ever stretches a low phase of SWCLK,
+# and the checks below prove it, because a blocked SEND between two events would make the interval unbounded
+# and every "==" below would fail.
+# Limits: SWCLK phases comfortably above the 20 ns or so that debug ports ask for; what matters with an open-drain
+# SWDIO is the time the pull-up gets to raise the line before the target samples it (1 us here: 4.7 kOhm and 50 pF
+# settle in a quarter of that).
+program ../examples/swd.asm
+thread 0
+start sw_start
+init A=? X=? C=?
+event RISE   = out 2=1
+event FALL   = out 2=0
+event SWDIO  = pull 0 | release 0                 # every change (or possible change) of the host's SWDIO
+event SAMPLE = at sw_rbit+2                       # INB: the host reads the target's bit
+
+check RISE   -> FALL  == 960ns                    # SWCLK high: exactly 12 turns, always
+check FALL   -> RISE  >= 1.36us                   # SWCLK low: at least 17 turns (so at most 431 kHz)
+check SWDIO  -> RISE  >= 1.12us                   # set-up of a host bit, pull-up rise time included
+check RISE   -> SWDIO >= 960ns                    # hold: the host never moves SWDIO while SWCLK is high
+check SAMPLE -> RISE  == 80ns                     # the target's bit is read 1 turn before the next rising edge
+check RISE   -> SAMPLE >= 2.24us                  # ... which is at least 28 turns after the target put it on the line

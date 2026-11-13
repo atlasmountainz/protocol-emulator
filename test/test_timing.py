@@ -357,6 +357,59 @@ def test_branch_on_unknown_gives_both_times(tmp_path):
     assert (mn, mx, ts) == (3, 5, {3, 5})
 
 
+def test_forget_is_sound_on_random_programs():
+    """`forget` (make registers / memory unknown at an address) may only widen a result. For random programs and
+    random places to forget at, every range computed with it contains the range computed without it, and the
+    observed times of real runs are still inside."""
+    compared = 0
+    for seed in range(1, 60):
+        words = sanitize(gen_program(seed))
+        start = timing.initial_state(0, 0, 0, 0, mem_known=True)
+        start = start[:5] + ((0, 0, 0, 0),) + start[6:]
+        rng = random.Random(seed)
+        forget = {rng.randrange(len(words)): set(rng.sample(["A", "X", "C", "MEM"], rng.randrange(1, 5)))
+                  for _ in range(rng.randrange(1, 6))}
+        try:
+            exact = timing.Graph(words, start, 0, False, max_nodes=40000)
+            blurred = timing.Graph(words, start, 0, False, max_nodes=40000, forget=forget)
+        except timing.AnalysisError:
+            continue
+        kinds = sorted({(e[0], e[1]) for eff in exact.effects for e in eff})
+        for _ in range(6):
+            if not kinds:
+                break
+            e, f = rng.choice(kinds), rng.choice(kinds)
+            res = []
+            for g in (exact, blurred):
+                frm = g.nodes_where([(e[0], e[1], None)], False)
+                to = g.nodes_where([(f[0], f[1], None)], False)
+                mn = g.min_time(frm, to)
+                mx = g.max_time(frm, to)[0]
+                res.append((mn[0] if mn else None, float("inf") if mx == "inf" else mx))
+            (mn0, mx0), (mn1, mx1) = res
+            if mn0 is None or mx0 is None:
+                continue                                  # the second event never follows the first
+            assert mn1 is not None and mn1 <= mn0, (seed, e, f, res)
+            assert mx1 is not None and mx1 >= mx0, (seed, e, f, res)
+            compared += 1
+    assert compared > 100, compared
+
+
+def test_forget_directive(tmp_path):
+    """Without `forget` the loop count is known (20 turns); forgetting X at the loop makes it anything from one
+    pass (8 turns) upwards: the exact answer is inside, and the directive is parsed from the spec."""
+    prog = "s: PIN 0 1\n LDX 3\nl: WAIT 4\n DJNZ l\n PIN 0 0\n HALT\n"
+    (tmp_path / "p.asm").write_text(prog)
+    (tmp_path / "p.timing").write_text("program p.asm\nstart s\nforget X at l\nevent UP = out 0=1\n"
+                                       "event DOWN = out 0=0\nreport UP -> DOWN\n")
+    an = timing.Analysis(tmp_path / "p.timing")
+    q = an.query("UP", "DOWN")
+    assert q["min"] == 8 and q["max"] == "inf", q
+    (tmp_path / "bad.timing").write_text("program p.asm\nstart s\nforget Q at l\n")
+    with pytest.raises(SystemExit):
+        timing.Spec(tmp_path / "bad.timing")
+
+
 def test_spin_loop_is_unbounded(tmp_path):
     prog = "s: PIN 0 1\nw: JPIN 0 0 w\n PIN 0 0\n HALT\n"
     mn, mx, ts = times(tmp_path, prog, {"UP": "out 0=1", "DOWN": "out 0=0"}, "UP", "DOWN")

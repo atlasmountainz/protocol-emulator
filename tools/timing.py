@@ -29,6 +29,10 @@ Spec file (one statement per line, '#' starts a comment):
     init A=3 X=? C=0                  initial registers ('?' = unknown; default: all 0 as after SPAWN / reset)
     mem zero|unknown                  initial data memory (default unknown)
     nonblocking                       SEND / RECV complete at once (default: they may block for ever)
+    forget A X C mem at LABEL[+N]     treat the listed registers / the data memory as unknown whenever the thread
+                                      reaches that instruction (keeps the analysis small when a program computes
+                                      with data that timing does not depend on, such as a CRC; always sound,
+                                      because unknown covers every value)
     event NAME = out P | out P=V | pull P | release P | od P | at LABEL[+N]   (alternatives: a | b)
     check A -> B [avoid E] == 8.64us | >= 4.7us | <= 50ns | in [3.9us, 5us] | in [200ns, 500ns] [550ns, 850ns]
     report A -> B                     print the range without a verdict
@@ -282,9 +286,20 @@ class Graph:
     and succ[i] = [(node, turns)]: the time from the execution of this node's instruction to the
     execution of the successor's."""
 
-    def __init__(self, words, start_state, thread=0, nonblocking=False, max_nodes=MAX_NODES):
+    def __init__(self, words, start_state, thread=0, nonblocking=False, max_nodes=MAX_NODES, forget=None):
         rom = list(words) + [0xF000] * (256 - len(words))
         self.words = rom
+        forget = forget or {}            # pc -> set of 'A' 'X' 'C' 'MEM' to make unknown on arrival
+
+        def blur(st):
+            parts = forget.get(st[0])
+            if not parts:
+                return st
+            pc, a, x, c, sp, stk, mem = st
+            return (pc, None if "A" in parts else a, None if "X" in parts else x, None if "C" in parts else c,
+                    sp, stk, (None,) * 16 if "MEM" in parts else mem)
+
+        start_state = blur(start_state)
         self.state, self.pcs, self.effects, self.succ = [start_state], [start_state[0]], [()], [None]
         index = {start_state: 0}
         todo = [0]
@@ -299,6 +314,7 @@ class Graph:
                 eff = ef or eff
                 if ns is None:
                     continue
+                ns = blur(ns)
                 j = index.get(ns)
                 if j is None:
                     j = len(self.state)
@@ -543,6 +559,7 @@ class Spec:
         self.programs, self.thread, self.sched = [], 0, DEFAULT_SCHED
         self.clock_mhz, self.start, self.init = 50.0, 0, {"A": 0, "X": 0, "C": 0}
         self.mem_zero, self.nonblocking = False, False
+        self.forget = []                 # [(set of 'A' 'X' 'C' 'MEM', label)]
         self.events, self.checks, self.reports = {}, [], []
         self.parse()
 
@@ -574,6 +591,12 @@ class Spec:
                 self.mem_zero = rest == "zero"
             elif kw == "nonblocking":
                 self.nonblocking = True
+            elif kw == "forget":
+                m2 = re.match(r"(.+?)\s+at\s+(\S+)$", rest)
+                parts = {w.upper() for w in m2.group(1).split()} if m2 else set()
+                if not m2 or not parts or parts - {"A", "X", "C", "MEM"}:
+                    self.err(n, "forget A X C mem at LABEL[+N]")
+                self.forget.append((parts, m2.group(2)))
             elif kw == "event":
                 m2 = re.match(r"(\w+)\s*=\s*(.*)$", rest)
                 if not m2:
@@ -670,7 +693,10 @@ class Analysis:
         self.events = {k: [("at", self.addr(e[1])) if e[0] == "at" else e for e in alts]
                        for k, alts in spec.events.items()}
         st = initial_state(self.start, spec.init["A"], spec.init["X"], spec.init["C"], spec.mem_zero)
-        self.g = Graph(self.words, st, spec.thread, spec.nonblocking)
+        forget = {}
+        for parts, where in spec.forget:
+            forget.setdefault(self.addr(where), set()).update(parts)
+        self.g = Graph(self.words, st, spec.thread, spec.nonblocking, forget=forget)
         self.cpt = spec.clocks_per_turn()
         self.ns_per_turn = self.cpt * 1000.0 / spec.clock_mhz
 

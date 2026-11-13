@@ -33,6 +33,7 @@ the timing windows:
 | `test_i2c_target_regs.py` | 28 | I2C target with 16 registers in the data memory: sweeps, single reads, wraparound, repeated start, wrong address; 100 and 400 kHz on two schedules; SCL sweep to the limit; 15 firmware mutants |
 | `test_spi_master_fast.py` | 13 | SPI master at 5 MHz (schedule `0,1,0,2`) and 8.33 MHz (`0,1,0,1`): SCK period and duty from edge timestamps, MOSI setup and hold, CS_N timing, MISO sampling window; 17 firmware mutants |
 | `test_usb_ls_rx_rtl.py` | 3 | the low-speed USB receiver (`docs/usb-low-speed.md`) on pins only: known packets, ±1.5 % bit rate with jitter and skew, wrong CRCs / PID / stuffing violation and recovery; the same scenarios run on the instruction-set model in `test_usb_ls_rx_model.py` (pure Python, 25 tests) against the bus model `test/usb_ls.py` (`test_usb_ls_model.py`, 55 tests, published CRC check values) |
+| `test_swd_can_rtl.py` | 4 | the SWD host and the CAN receiver (`docs/examples-swd-can.md`) on pins only: the SWD power-up sequence against a debug-port model with WAIT answers and a wrong parity bit, nobody there, FAULT; CAN frames at 1 % off with jitter received and acknowledged in the ACK slot, a wrong CRC and an error flag not acknowledged, listen-only. The same and many more scenarios run on the instruction-set model in `test_swd_model.py` (34 tests, 8 firmware mutants) and `test_can_model.py` (42 tests, 10 firmware mutants), pure Python |
 | `test_isa_v2_rtl.py` | 18 | the ISA v2 instructions on the real chip: ALU with carry and borrow corner values, every branch condition taken and not taken, data memory (direct, X-indexed, wraparound, per thread), `JMPA` / `CALLA` / `RETL` lookup tables, wide pin access, undefined sub-opcodes as `NOP`, every kind of thread schedule (default, `0,1,0,2`, `0,1,0,1`, ... , an illegal one, none sent) |
 
 ## 2. Random programs against an independent model
@@ -104,8 +105,8 @@ in `docs/timing-analysis.md`. The analyzer is itself checked in six ways:
 
 | Module | Tests | Covers |
 |---|---|---|
-| `test/test_timing.py` (pure Python, about 7 s) | 28 | every one of the 65,536 instruction words: the pins written equal the model's; 60,000 random abstract steps against the model's step; 119 random programs (103 analysable) with 17,812 observed intervals inside the analysed ranges; the shipped specs hold; broken firmware (a short `WAIT`, a data-dependent extra instruction, the I2C hold delay removed) fails them; 8 deliberate bugs in the analyzer were each caught; hand-computed programs; `src/rom.v` equals the assembled firmware (162 words) and the ROM specs analyse that program |
-| `test/test_timing_rtl.py` (RTL only: `make COCOTB_TEST_MODULES=test_timing_rtl`) | 10 | the real RTL runs each firmware against a hostile I2C slave, a 1-Wire device, random USB traffic and random data while every executed instruction is traced; all 5,131 intervals between the specs' events lie inside the analysed ranges and sets, and both ends of every bounded range are reached; a deliberately wrong cost model is caught |
+| `test/test_timing.py` (pure Python, about 20 s) | 33 | every one of the 65,536 instruction words: the pins written equal the model's; 60,000 random abstract steps against the model's step; 119 random programs (103 analysable) with 17,812 observed intervals inside the analysed ranges; the shipped specs hold; broken firmware (a short `WAIT`, a data-dependent extra instruction, the I2C hold delay removed) fails them; 8 deliberate bugs in the analyzer were each caught; hand-computed programs; the `forget` directive only ever widens a range (random programs); `src/rom.v` equals the assembled firmware (162 words) and the ROM specs analyse that program |
+| `test/test_timing_rtl.py` (RTL only: `make COCOTB_TEST_MODULES=test_timing_rtl`) | 13 | the real RTL runs each firmware against a hostile I2C slave, a 1-Wire device, random USB and CAN traffic, an SWD debug-port model and random data while every executed instruction is traced; all 8,905 intervals between the specs' events lie inside the analysed ranges and sets, and both ends of every bounded range are reached; a deliberately wrong cost model is caught |
 
 It found one real defect: the ROM I2C master could change SDA 160 ns after SCL fell. Four `WAIT 1` were added
 (158 to 162 ROM words) and the check now proves at least 320 ns on every path.
@@ -115,9 +116,10 @@ It found one real defect: the ROM I2C master could change SDA 160 ns after SCL f
 Every push runs the Tiny Tapeout flow: synthesis, place and route at a 20 ns clock, timing in three corners,
 antenna, LVS and DRC, the precheck, and the cocotb suites `test.py` (17 tests of the ROM firmware),
 `test_isa_v2_rtl.py` (18 tests of the version-2 instructions and the thread schedules) and `test_spi_master_fast.py`
-(13 tests of the 5 MHz SPI master) and `test_usb_ls_rx_rtl.py` (3 tests of the USB receiver) on the gate-level netlist.
-A separate job runs the pure-Python tests (`python -m pytest test`, which includes the instruction-set model, the timing analyzer and the USB
-receiver on the model) and the RTL timing cross-check (`test_timing_rtl.py`); that module reads internal signals of the
+(13 tests of the 5 MHz SPI master), `test_usb_ls_rx_rtl.py` (3 tests of the USB receiver) and `test_swd_can_rtl.py`
+(4 tests of the SWD host and the CAN receiver) on the gate-level netlist.
+A separate job runs the pure-Python tests (`python -m pytest test`, which includes the instruction-set model, the timing analyzer and the USB,
+SWD and CAN programs on the model) and the RTL timing cross-check (`test_timing_rtl.py`); that module reads internal signals of the
 CPU, so it is not part of the gate-level run.
 
 ## What this does not cover
