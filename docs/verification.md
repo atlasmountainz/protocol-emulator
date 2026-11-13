@@ -130,6 +130,10 @@ CPU, so it is not part of the gate-level run.
   from the standards and datasheets listed in `docs/timing-analysis.md`, several quoted from memory; they should be
   compared with the document for the device actually used.
 - No analog or pad-level simulation; the I/O is checked only at the digital boundary.
+- Not run on an FPGA. The Tiny Tapeout FPGA flow for the demo board's ICE40UP5K was tried once (the `fpga` workflow,
+  started by hand): the design needs 10,747 logic cells and the part has 5,280, because the 256-word program memory
+  is built from flip-flops, as it is on the chip. A version of the memory that maps to the FPGA's block RAM was not
+  made.
 - The protocol models in the testbenches are written by the same author as the firmware. They are checked
   against the published timing parameters, but not against a physical device.
 - Isolation is proved with the channel and SPAWN excluded for the thread under test. Threads that do use the
