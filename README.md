@@ -120,7 +120,7 @@ docs/           info.md (datasheet), isa.md (instruction set), loading.md (loadi
 
 ## About the development
 
-This project was developed with some help from an AI assistant (Claude, by Anthropic), which
+This project was developed with some help from an AI assistant (Claude, by Anthropic), with some additional assistance from friends and colleagues, who
 helped with some of the RTL, firmware, assembler, and tests under the author's direction. Everything here is
 open source (Apache-2.0).
 
