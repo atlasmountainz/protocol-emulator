@@ -32,12 +32,22 @@ case "$MODE" in
   pipeline) prove pipeline pipeline formal/pipeline.v ;;
   iso)      for T in 0 1 2 3; do iso $T iso_t; done ;;
   iso[0-3]) iso ${MODE#iso} iso_t ;;      # one thread only (so the four can run in parallel)
-  mutant)   # A deliberately broken CPU in which a thread's shift result depends on the NEXT thread's
-            # program counter. Every one of these runs must report FAILED, otherwise the proof is vacuous.
-            sed "s/a_n = {1'b0, a_e\[7:1\]};/a_n = {1'b0, a_e[7:1]} ^ {7'b0, pc_q[8*(e ^ 2'd1)]};/" src/cpu.v > "$OUT/cpu_mutant.v"
-            cmp -s src/cpu.v "$OUT/cpu_mutant.v" && { echo "mutation did not apply"; exit 1; }
-            CPU="$OUT/cpu_mutant.v"; BASE_ONLY=1
-            for T in 0 1 2 3; do iso $T mut_t; done ;;
+  mutant)   # Deliberately broken CPUs. Every one of these runs must report FAILED, otherwise the proofs are vacuous.
+            #  M1: a thread's shift result depends on the NEXT thread's program counter  (isolation, 4 threads)
+            #  M2: a data-memory load reads the NEXT thread's memory                      (isolation, 4 threads)
+            #  M3: the PC forwarding path for a thread owning two slots is removed        (pipeline invariants)
+            mut() {  # mut <name> <sed expression>
+              sed "$2" src/cpu.v > "$OUT/cpu_$1.v"
+              cmp -s src/cpu.v "$OUT/cpu_$1.v" && { echo "mutation $1 did not apply"; exit 1; }
+              return 0
+            }
+            mut m1 "s/a_n = {1'b0, a_e\\[7:1\\]};/a_n = {1'b0, a_e[7:1]} ^ {7'b0, pc_q[8*(e ^ 2'd1)]};/"
+            mut m2 "s/wire \\[7:0\\]  m_rd   = dmem_q\\[8\\*{e, m_idx} +: 8\\];/wire [7:0]  m_rd   = dmem_q[8*{e ^ 2'd1, m_idx} +: 8];/"
+            mut m3 "s/(e_valid \\&\\& e == ftn)     ? pc_e_new :/(e_valid \\&\\& e == ftn)     ? pc_e :/"
+            BASE_ONLY=1
+            CPU="$OUT/cpu_m1.v"; for T in 0 1 2 3; do iso $T mut1_t; done
+            CPU="$OUT/cpu_m2.v"; for T in 0 1 2 3; do iso $T mut2_t; done
+            CPU="$OUT/cpu_m3.v"; prove mut3_pipeline pipeline formal/pipeline.v ;;
   all)      prove pipeline pipeline formal/pipeline.v
             for T in 0 1 2 3; do iso $T iso_t; done ;;
 esac
