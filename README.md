@@ -1,122 +1,115 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg)
 
-# Protocol emulator: a tiny cycle-exact CPU for bit-banging serial protocols
+# Protocol emulator: one chip, a bunch of protocols, all in software
 
-An entry in Jane Street's [protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/),
-built for Tiny Tapeout on IHP's 130 nm CMOS5L process.
+Hello team. This is my entry for Jane Street's
+[protocol emulator ASIC competition](https://blog.janestreet.com/protocol-emulator-asic-competition/). It's a
+chip for Tiny Tapeout on IHP's 130 nm process (8x4 tiles, 50 MHz clock).
 
-Instead of one fixed block per protocol, the chip is a small CPU whose instructions are built for
-reading pins, driving pins and counting cycles. Protocols are **firmware**, and the firmware can be
-**replaced after fabrication**: the host loads a new program into an on-chip program memory over the
-pins ([`docs/loading.md`](docs/loading.md)). The built-in firmware runs three protocols, picked by a
-mode pin at boot:
+The challenge: make a chip that can speak protocols it wasn't designed for. So instead of building a UART block, an
+SPI block, an I2C block, and so on, I decided to build a tiny CPU that's really good at wiggling pins at exact times, and every
+protocol is just a program. You load a new program over the pins and the same chip becomes something else. No new
+silicon needed.
 
-| Mode pin | Protocol | What the demo firmware does |
+## What it can do
+
+The chip boots with UART, SPI and I2C already in its ROM. Everything else is a program you load after it's made:
+
+| Protocol | What the program does | Doc |
 |---|---|---|
-| none | **UART** TX, 8N1, 115200 baud @ 50 MHz | sends the byte on `ui[7:0]` |
-| `uio[7]` | **SPI** master, mode 0, MSB first | sends `ui[7:0]`, reads a byte, sends it back (self-test) |
-| `uio[6]` | **I2C** master, 100 kHz, clock stretching | EEPROM random read at address 0x50, **printed on the UART**: a protocol bridge |
+| UART | send, receive, and full-duplex echo | [info](docs/info.md) |
+| SPI | master (up to 8.33 MHz) and target | [fast SPI](docs/examples-fast-and-memory.md), [target](docs/examples-spi-target.md) |
+| I2C | master (with clock stretching) and target with 16 registers | [target](docs/examples-i2c-target.md) |
+| 1-Wire | reads a device's ROM code and checks its CRC | [1-Wire / JTAG](docs/examples-onewire-jtag.md) |
+| JTAG | reads the first device's ID and counts the devices in the chain | [1-Wire / JTAG](docs/examples-onewire-jtag.md) |
+| SWD | wakes up an ARM debug port and powers it on | [SWD / CAN](docs/examples-swd-can.md) |
+| CAN | receives 500 kbit/s frames, checks the CRC, sends the ACK | [SWD / CAN](docs/examples-swd-can.md) |
+| Low-speed USB | receives 1.5 Mbit/s packets, checks PIDs and CRCs | [USB](docs/usb-low-speed.md) |
+| WS2812, PS/2, MIDI | LED strip driver, keyboard receiver, MIDI out | [LEDs / keyboard / MIDI](docs/examples-leds-keyboard-midi.md) |
 
-The I2C firmware calls the UART firmware as a subroutine, so one protocol feeding another is just a
-`CALL`.
+That's every protocol on Jane Street's list except 10 Mbit Ethernet, which just doesn't fit in a 50 MHz chip. Some are
+only half done, and I explain that in [What it can't do](#what-it-cant-do).
 
-## Design in one page
+## How it works (the short version)
 
-```
- ui[7:0] ─┐                       ┌────────────┐
- uio[7:0] ┴─> 2-flop sync ─pins─> │  CPU core  │ ──push-pull──> uo[7:0]
-                                  │ A X C PC   │ ──open-drain─> uio[7:0]  (ODRV: pull low / release)
-                                  │ 4-deep call│
-                                  │ stack      │ <──instr── ROM (256 x 16, built-in firmware)
-                                  └────────────┘          or program memory (128 x 16, loaded over the pins)
-                                        ^
-                       LOAD uio[5] / STROBE uio[4] / ui[7:0] ─ program loader
-```
+The core is a **four-thread barrel CPU**. There are four threads, and they take turns in a fixed order, one
+instruction each. Every instruction takes exactly one turn (or `1 + n` turns for `WAIT n`). Nothing else can slow a
+thread down: no interrupts, no caches, no fighting over the bus. So the timing of a protocol is just counting
+instructions, and two protocols can run side by side without messing each other up.
 
-- **Cycle-exact.** Every instruction takes 1 clock, except `WAIT n` which takes `1 + n`. Protocol
-  timing is a matter of adding up cycles in the program, with no hidden pipeline effects.
-- **Small ISA, 19 instructions** (`docs/isa.md`): `PIN`, `OUT`, `WAIT`, `JMP`, `JPIN`, `LDA`, `SHR`,
-  `SHL`, `OUTC`, `LDX`, `DJNZ`, `IN`, `INB`, `CALL`, `RET`, `ODRV`, `ODRVC`, `NOP`, `HALT`.
-- **Open-drain pins.** `ODRV` pulls a line low or releases it, and the pad can always be read back,
-  so a slave stretching the I2C clock is visible to the firmware.
-- **Shift through a carry flag.** `SHL` / `SHR` move one bit into `C`; `OUTC` / `ODRVC` drive a pin
-  from `C`; `INB` samples a pin into `A[0]`. Together these make a serial shift loop 4 instructions.
-- **Loadable program memory.** Raise `uio[5]` (LOAD), clock 256 bytes in on `ui[7:0]` with `uio[4]`
-  (STROBE), lower LOAD, and the CPU runs the new program. A reset without LOAD brings back the ROM
-  firmware. `tools/load_image.py` builds the image from assembly. The same firmware behaves identically
-  from ROM and from the program memory.
-- **Firmware toolchain.** `tools/asm.py` is a small assembler with labels. `tools/build_rom.sh`
-  assembles `firmware/*.asm` into `src/rom.v`.
+Some other things it has:
 
-Pinout and test instructions are in [`docs/info.md`](docs/info.md); the instruction set is in
-[`docs/isa.md`](docs/isa.md).
+- **Pin instructions.** Set a pin, wait, jump if a pin is high or low, and shift a bit out through the carry flag.
+- **Open-drain pins** that can only pull low or let go, so I2C, 1-Wire and SWD work without ever fighting the
+  other device.
+- **An 8-bit ALU, 16 bytes of memory per thread, and jump tables**, so CRCs and parity get computed in the program.
+- **A mailbox between threads.** For example, one thread reads the bus and another sends the bytes out over UART.
+- **A 256-word program memory you load over the pins** (`tools/load_image.py` makes the file). See
+  [loading](docs/loading.md).
+- **A schedule you can change**, so one thread can get two of the four turns and run twice as fast. CAN and USB use
+  this.
 
-## Verification
+The full instruction set is in [docs/isa.md](docs/isa.md).
 
-The tests are layered so that they can catch different kinds of mistakes:
+## The part I think is coolest: proving the timing
 
-1. **Directed cocotb tests** (`test/test.py`, run by CI): UART idle and data, SPI against a
-   simulated slave, I2C read / missing-slave / clock-stretching against a simulated EEPROM.
-2. **Cycle-exact timing.** The UART test asserts every TX transition is exactly 434 cycles apart.
-   It caught a real firmware bug (a stop bit starting one cycle early).
-3. **Protocol-spec checks.** The simulated I2C bus measures the master against the standard-mode
-   limits (tLOW, tHIGH, tHD;STA, tSU;STA, tSU;STO, tBUF, tSU;DAT) on every edge.
-4. **Mutation checks.** Each test suite was run against deliberately broken firmware or RTL to confirm
-   it fails: shortened I2C delays, a removed clock-stretch wait, a wrong DJNZ exit, a wrong RET slot,
-   an inverted `ODRVC`, a dropped JPIN address bit. Each was caught.
-5. **Random differential testing** (`test/random_run.py`): random programs and random pin inputs run
-   on the RTL and on an independent Python model of the ISA (`test/isa_model.py`, written from
-   `docs/isa.md`), comparing PC, A, X, C, stall counter, stack pointer and every output pin **on every
-   clock edge**. It also reports instruction and branch-outcome coverage.
-6. **Loader tests.** A custom program is loaded and run, replaced by another without a reset, loaded by a
-   sloppy host (random setup times and strobe widths), and a reset brings the ROM firmware back. The whole
-   directed suite also runs with the firmware loaded into the program memory (`FROM_RAM=1 make`). The
-   random differential test has a `--ram` mode that loads each random program over the pins first.
-7. **CI.** GitHub Actions runs the cocotb tests, builds the layout (LibreLane), and runs a
-   gate-level simulation of the synthesized netlist.
+Usually you test protocol timing by simulating it and hoping you hit the bad cases. Because every instruction on this
+chip takes a fixed number of clocks, I could do something stronger. [`tools/timing.py`](tools/timing.py) is a static
+timing analyzer for the firmware. It looks at every possible path through a program, for every possible input, and
+tells you the exact shortest and longest time between two events. Then you write the protocol's rules down
+(like "SCL low for at least 4.7 µs") and it proves them or tells you which path breaks them.
 
-```
-cd test && make                      # directed tests
-cd test && python3 random_run.py 100 # 100 random programs vs the ISA model
-cd test && python3 random_run.py --ram 100   # same, loaded into the program memory over the pins
-cd test && FROM_RAM=1 make           # directed tests with the firmware loaded over the pins
-```
+Some things it proved:
 
-## Hardware results
+- The I2C master never has SCL low for less than the spec, on any path. It also found a real bug: SDA could change
+  160 ns after SCL fell, which is too fast. I fixed it and now it's proven to be at least 320 ns.
+- The USB receiver re-lines-up with the sender after exactly 12 turns on every single path, which is the whole reason
+  it can follow a 1.5 Mbit/s signal without a PLL.
+- The CAN ACK is exactly one bit long and lands in the ACK slot.
 
-Measured by the LibreLane build in CI (6x4 tiles, CPU with UART firmware):
+To make sure the analyzer itself isn't lying, I checked it against the actual chip: the RTL runs every program
+against random traffic, and all 8,905 measured intervals land inside the proven ranges. When I broke the analyzer on
+purpose, the check caught it. More in [docs/timing-analysis.md](docs/timing-analysis.md).
 
-| | |
-|---|---|
-| Cells after place and route | 778 (including clock tree and hold buffers) |
-| Standard-cell area | about 11,600 µm² |
-| Core area available (6x4) | 902,417 µm² (about 1.3% used) |
-| Setup timing | no violations at the target clock |
-| Antenna violations | 0 |
+## How I tested it
 
-The design uses a tiny fraction of the allowed area, so there is a lot of headroom for more
-capability (see below).
+I didn't think one test was sufficient validation, so I built more layers:
 
-## Repository layout
+1. **Formal proofs** that every instruction takes one turn and that threads can't mess with each other's timing.
+2. **Random programs** run on the RTL and on a separate Python model of the CPU, comparing every register on every
+   clock.
+3. **Protocol tests** against models of the other device (an EEPROM, a USB host, a CAN bus, an ARM debug port, ...),
+   with the bit rate pushed off and jitter added.
+4. **Mutation tests**: I break the firmware on purpose and make sure the tests notice.
+5. **Timing proofs** with the analyzer above.
+6. **CI** on every push: the Tiny Tapeout build (layout, timing, DRC, LVS, precheck) plus the tests on the
+   gate-level netlist.
+
+Everything is in [docs/verification.md](docs/verification.md).
 
 ```
-src/            project.v (top, with the program loader), cpu.v (core), pmem.v (program memory),
-                rom.v (generated)
-firmware/       main.asm (boot dispatcher), uart_tx.asm, spi_master.asm, i2c_master.asm
-tools/          asm.py (assembler), build_rom.sh, load_image.py (image for the program memory)
-test/           directed tests, ISA model, random differential test
-reference/      the original fixed-logic UART, kept as a golden model
-docs/           info.md (datasheet), isa.md (instruction set), loading.md (loading a program)
+cd test && make                                   # the main tests on the RTL
+python3 -m pytest test -q                         # the Python tests (model, analyzer, protocols)
+python3 tools/timing.py firmware/timing/*.timing  # the timing proofs
 ```
 
-## Status and ideas
+## Hardware numbers
 
-- Working today: UART TX, SPI master, I2C master, and a program memory loadable over the pins, all
-  verified in simulation.
-- Not done yet: receive-side UART, and more protocols (JTAG, SWD, PS/2, CAN, low-speed USB, 10BASE-T).
-  The loader has not been tried on real hardware, only in simulation.
-- The program memory is 128 words and has no reset. Spare area is available for a larger memory or
-  several cores sharing the pins.
+From the CI build: 35,599 cells, about 49 % of the 8x4 area, and no setup or hold violations at 20 ns in any corner.
+Antenna, LVS, DRC and precheck all pass. Most of the area is the 256-word program memory. More in
+[docs/results.md](docs/results.md).
+
+## What it can't do
+
+The truth about its limitations:
+
+- **USB only receives.** The bidirectional pins can only pull low (open drain), so the chip can't drive both
+  levels on the USB lines. Sending would need an outside driver chip.
+- **CAN receives and acknowledges, but doesn't send frames.** It only does standard 11-bit IDs.
+- **No Ethernet.** 10 Mbit Manchester needs way more speed than a 50 MHz chip running one instruction every 40 ns.
+- **The other end is always a model I wrote.** The USB host, CAN bus, debug port, and so on are all simulations. None
+  of this has run on a real device or on silicon yet, unfortunately.
+- **It doesn't fit the Tiny Tapeout FPGA board** (it needs about twice the logic), so I couldn't test it on an FPGA.
 
 ## About the development
 
@@ -125,3 +118,15 @@ helped with some of the RTL, firmware, assembler, and tests under the author's d
 open source (Apache-2.0).
 
 <!-- TODO(author): add your own notes here: why you chose this design, what you learned. -->
+
+## Repo map
+
+```
+src/        the chip (cpu.v is the core)
+firmware/   the ROM programs, examples/ (loadable programs), timing/ (timing specs)
+tools/      assembler, image builder, timing analyzer
+test/       all the tests and protocol models
+docs/       everything in more detail
+```
+
+Everything is open source under Apache-2.0.
