@@ -70,6 +70,8 @@ the minimum equals the maximum.
 | Low-speed USB receiver (`docs/usb-low-speed.md`), schedule `0,1,0,1` | the window of nine polls starts exactly 13 turns after the poll that saw an edge and 9 after the last poll without one, for every bit sequence, byte boundary and stuffed bit; thread 1 answers every message within the time between two bytes | 12 turns after an edge, 8 after none, polls one turn apart, 17 turns per bit, on every path; thread 1 at most 69 turns per message, strobes exactly 160 ns |
 | SWD host (`docs/examples-swd-can.md`) | SWCLK phases, SWDIO set-up with an open-drain line, the sampling point; nothing assumed about the target's answers or the UART | SWCLK high exactly 960 ns, low ≥ 1.36 µs, host bit set up 1.12 to 1.76 µs before the rising edge and never moved while SWCLK is high, target bit read exactly 1 turn before a rising edge |
 | CAN receiver at 500 kbit/s (`docs/examples-swd-can.md`), schedule `0,1,0,1` | the window of 13 polls re-aligns on every edge and the ACK is one bit long in the ACK slot, for every bit sequence and CRC value | next window exactly 44 turns after the poll that saw an edge, exactly 50 turns per bit without one; ACK exactly 2 µs, starting exactly 99 turns (149 with a stuff bit after the CRC) after the poll that saw the last CRC bit begin; thread 1 at most 42 turns per message |
+| Low-speed USB host (`docs/usb-low-speed.md`), schedule `0,1,0,1` | every bit cell's level is written at an exact time on every path, the EOP, the release of the lines, the handshake samples; the encoder thread keeps ahead | groups of three cells exactly 2 µs, cells 17 / 17 / 16 turns, SE0 exactly 1.32 µs, J exactly 17 turns, samples 16 or 17 turns apart; a 7-bit group made in at most 4.52 µs (used in 4.67 µs) |
+| Three protocols at once (`docs/examples-multi.md`) | the LED and UART threads keep their stand-alone timing in the shared image | WS2812 bit exactly 1.28 µs, UART bit exactly 8.64 µs |
 | 5 MHz SPI master (fast schedule) | the claims in the file header | SCK period 200 ns (5 turns of 40 ns), high 80 ns, low 120 ns, MOSI setup 40 ns, CS_N 3 turns before the first and after the last SCK edge |
 
 ## What it found
@@ -113,12 +115,16 @@ An unsound analyzer is worse than none, so it is tested against the reference mo
    runs each firmware against hostile or random inputs (a stretching, randomly ACKing and NACKing I2C slave, a
    1-Wire device, random MISO and data, ...) while the testbench records which instruction the thread executes at
    every clock. Every interval between two events in the trace lies in the analyzer's range and in its exact set.
-   8,905 intervals are compared (UART 180, SPI 896, I2C 284, WS2812 1,364, fast SPI 640, MIDI 72, 1-Wire 210,
-   USB receiver 1,417, SWD host 2,065, CAN receiver 1,777); the stimulus seeds are fixed, so the numbers repeat.
-   For every bounded range in these runs both ends are attained by the RTL (I2C tLOW 62 to 67 turns, WS2812 4 to 9
-   and 7 to 12 turns, SPI hold 8 to 11, 1-Wire exact, USB window 12 / 8 / 9 turns exact and thread 1 up to 69, SWD set-up 14 to 22 turns,
-   CAN windows 43 / 13 / 37 turns exact, the ACK 50, thread 1 up to 42), so the ranges are tight, not merely safe. With a wrong cost
-   for `WAIT` in the analyzer the comparison fails.
+   9,607 intervals are compared (UART 180, SPI 896, I2C 284, WS2812 1,364, fast SPI 640, MIDI 72, 1-Wire 210,
+   USB receiver 1,417, SWD host 2,065, CAN receiver 1,777, USB host 702); the stimulus seeds are fixed, so the
+   numbers repeat. For every bounded range in these runs but one, both ends are attained by the RTL (I2C tLOW 62 to
+   67 turns, WS2812 4 to 9 and 7 to 12 turns, SPI hold 8 to 11, 1-Wire exact, USB window 12 / 8 / 9 turns exact and
+   thread 1 up to 69, SWD set-up 14 to 22 turns, CAN windows 43 / 13 / 37 turns exact, the ACK 50, thread 1 up to 42,
+   USB host cells 16 / 17 and groups of 50 exact), so the ranges are tight, not merely safe. The exception is the
+   CAN ACK after a last CRC bit without an edge that is followed by a stuff bit (143 turns after the poll): the
+   random frames of this run do not contain that case, so only its 93-turn end is seen on the RTL; the model tests
+   (`test_can_model.py`) send frames with a stuff bit after the CRC. With a wrong cost for `WAIT` in the analyzer
+   the comparison fails.
 
 The chain is: formal proofs (one instruction per turn, isolation) → RTL equals the model (random differential
 test, every register every clock) → the analyzer equals the model (1 to 5) → the analyzer's ranges contain what the

@@ -37,6 +37,8 @@ import usb_ls  # noqa: E402
 import can  # noqa: E402
 import swd  # noqa: E402
 import zlib  # noqa: E402
+import asm  # noqa: E402
+from usb_host_bus import HostBus  # noqa: E402
 
 SPECS = ROOT / "firmware" / "timing"
 HALT = 0xF000
@@ -168,7 +170,7 @@ async def reset_rom(dut, uio):
     dut.rst_n.value = 1
 
 
-async def boot_loaded(dut, an, sched=None, uio=0, on_release=None):
+async def boot_loaded(dut, an, sched=None, uio=0, on_release=None, patch=None):
     """Reset, load the program over the pins; `on_release()` runs just before LOAD goes low (the CPU starts
     a few clocks later), so that a trace started there sees the very first instruction."""
     await start_clock(dut)
@@ -179,7 +181,10 @@ async def boot_loaded(dut, an, sched=None, uio=0, on_release=None):
     await ClockCycles(dut.clk, 10)
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 2)
-    words = an.words + [HALT] * (RAM_WORDS - len(an.words))
+    words = list(an.words)
+    for addr, w in (patch or {}).items():         # words the analysis does not look at (e.g. a reset length)
+        words[addr] = w
+    words += [HALT] * (RAM_WORDS - len(words))
     await load_program(dut, words, None, sched)
     if on_release:
         on_release()
@@ -228,7 +233,8 @@ async def i2c_bus(dut, rng, mode, start_hold, rounds):
                 dut.uio_in.value = mode | phase_start | (scl << 2) | (sda << 3)
 
 
-async def run_scenario(dut, spec_name, clocks, setup, drivers, log_name=None, sched=None, loaded=False, uio0=0):
+async def run_scenario(dut, spec_name, clocks, setup, drivers, log_name=None, sched=None, loaded=False, uio0=0,
+                       patch=None):
     an = timing.Analysis(SPECS / spec_name)
     rng = random.Random(zlib.crc32(spec_name.encode()) + SEEDS.get(spec_name, 0))    # the same stimulus in every run
     trace, tasks = [], []
@@ -238,7 +244,7 @@ async def run_scenario(dut, spec_name, clocks, setup, drivers, log_name=None, sc
         tasks.extend(cocotb.start_soon(d(dut, rng)) for d in drivers)
 
     if loaded:
-        await boot_loaded(dut, an, sched, uio0, on_release=go)
+        await boot_loaded(dut, an, sched, uio0, on_release=go, patch=patch)
     else:
         await reset_rom(dut, uio0)
         go()
@@ -425,6 +431,33 @@ async def test_can_rx_thread1_loaded(dut):
     """Thread 1 of the same receiver: every message handled within the proven 42 turns, strobes 160 ns."""
     await run_scenario(dut, "can_rx_thread1.timing", 110000, None, [can_bus], sched=(0, 1, 0, 1), loaded=True,
                        uio0=USB_PULLUPS)
+
+
+async def usb_host_wire(dut, rng):
+    """The device side of a low-speed USB bus (usb_host_bus.py): it ACKs or NAKs each SETUP + DATA0 at a random
+    delay and rate; D+ / D- go back on uio_in[1:0]."""
+    bus = HostBus(reset_min=4000, answer=rng.choice([usb_ls.ACK, usb_ls.NAK]), delay_bits=rng.uniform(2, 6.5),
+                  ppm=rng.randrange(-15000, 15001))
+    dp, dm, c = 0, 1, 0
+    while True:
+        dut.uio_in.value = dp | (dm << 1) | 0xCC
+        await RisingEdge(dut.clk)
+        dp, dm = bus.step(c, int(dut.uio_oe.value), int(dut.uio_out.value))
+        c += 1
+
+
+def usb_host_short_reset(spec):
+    """The bus reset of 10 ms is outside the analysed code (the specs start at h_frame): the RTL runs it with one
+    wait instead of 64, so that the frames start after 160 us."""
+    words, labels = asm.assemble((SPECS / spec).parent.joinpath("../examples/usb_ls_host.asm").read_text())
+    return {labels["h_rlen"]: asm.assemble("LDX 1")[0][0]}
+
+
+@cocotb.test()
+async def test_usb_ls_host_thread0_loaded(dut):
+    """The USB host's line driver: cells of 17 / 17 / 16 turns, EOP, release, the handshake samples."""
+    await run_scenario(dut, "usb_ls_host.timing", 120000, None, [usb_host_wire], sched=(0, 1, 0, 1), loaded=True,
+                       uio0=0xCE, patch=usb_host_short_reset("usb_ls_host.timing"))
 
 
 @cocotb.test()

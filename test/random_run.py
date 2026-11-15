@@ -41,7 +41,7 @@ REQUIRED += ["ADD", "ADD_c0", "ADD_c1", "SUB", "SUB_b0", "SUB_b1", "AND", "OR", 
              "CMPX", "CMPX_b0", "CMPX_b1", "ADDX", "ADDX_c0", "ADDX_c1", "SUBX", "SUBX_b0", "SUBX_b1",
              "ANDX", "ORX", "XORX",
              "XADD", "XCMP", "XCMP_b0", "XCMP_b1",
-             "INH", "OUTA", "ODRVA",
+             "INH", "OUTA", "ODRVA", "PPA",
              "LDM", "STM", "LDMX", "STMX", "LDMX_wrap", "STMX_wrap",
              "JMPA", "CALLA", "RETL",
              "BR_undefined", "ACC_undefined", "XIMM_undefined", "WIDE_undefined", "EXT_undefined"]

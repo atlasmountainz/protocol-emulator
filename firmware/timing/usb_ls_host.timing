@@ -1,0 +1,30 @@
+# Low-speed USB host (firmware/examples/usb_ls_host.asm), thread 0 = the line driver, schedule 0,1,0,1 (40 ns per
+# turn). One bit is 16.67 turns; the cells are 17, 17 and 16 turns, so three bits take exactly 50 turns = 2 us.
+# nonblocking: the encoder (thread 1) always has the next group in the mailbox when the driver needs it; the
+# encoder's own spec (usb_ls_host_enc.timing) bounds how long it takes to make a group, and the tests check every
+# edge on the wire.
+program ../examples/usb_ls_host.asm
+thread 0
+sched 0,1,0,1
+start h_frame
+nonblocking
+init A=? X=? C=?
+event GRP   = at tx_g
+event CELLW = at c_out
+event SE0   = at tx_se0
+event JW    = at tx_j
+event REL   = at h_rel+1                  # PPA: the lines are no longer driven
+event SMP   = at h_smp+1
+event RX    = at h_rx
+
+# Every bit cell's level is written at an exact time: 17, 17, 16 turns apart, on every path (a new group from the
+# mailbox or not, a 0 or a 1, the end of the packet).
+check GRP -> GRP == 50 turns avoid SE0
+check GRP -> CELLW == 13 turns avoid SE0
+check CELLW -> CELLW in [16 turns, 17 turns] avoid SE0
+check CELLW -> SE0 in [16 turns, 17 turns] avoid CELLW
+# EOP: SE0 for 1.32 us (USB: 1.25 .. 1.5 us), then J for one bit, then the lines are let go
+check SE0 -> JW == 1.32us
+check JW -> REL == 17 turns
+# The handshake samples: 17, 17, 16 turns apart
+check SMP -> SMP in [16 turns, 17 turns] avoid RX

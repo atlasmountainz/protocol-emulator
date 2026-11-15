@@ -51,8 +51,9 @@ fills over the pins, so a new protocol is a new program, not a new chip. Raise `
 byte on `ui[7:0]` and pulse `uio[4]` (STROBE), low byte of each 16-bit word first, 512 bytes in all, then
 lower LOAD and the CPU starts the new program at address 0. A reset without LOAD brings back the ROM
 firmware. Details and timing are in `docs/loading.md`; `tools/load_image.py` builds the image from
-assembly source. Ready-made programs for I2C and SPI targets, 1-Wire, JTAG, SWD, a CAN receiver, a low-speed USB receiver, WS2812,
-PS/2 and MIDI are listed in `docs/examples.md`.
+assembly source. Ready-made programs for I2C and SPI targets, 1-Wire, JTAG, SWD, a CAN receiver, a low-speed USB host and receiver,
+WS2812, PS/2, MIDI, and three protocols at once are listed in `docs/examples.md`. The `uio` pads are open drain after
+reset; a program can switch them to push-pull with `PPA` (never the loader's `uio[5:4]`) to drive both levels.
 
 ## How to test
 

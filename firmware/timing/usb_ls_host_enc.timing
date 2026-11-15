@@ -1,0 +1,18 @@
+# Low-speed USB host (firmware/examples/usb_ls_host.asm), thread 1 = the encoder, schedule 0,1,0,1.
+# The line driver (thread 0) takes a new group of 7 bits every 7 bit cells, 116.7 turns. The mailbox holds one
+# group and the encoder works on the next, so the driver never waits if the encoder makes every group within two
+# group times of the one before; this spec shows it does it within one.
+program ../examples/usb_ls_host.asm
+thread 1
+sched 0,1,0,1
+start e_frame
+nonblocking
+init A=? X=? C=?
+event BIT   = at e_bit
+event GROUP = at e_f0+1 | at e_f1+1
+event FRAME = at e_frame
+event ENDP  = at e_end
+event BYTE  = at emit
+
+check BIT -> BIT <= 20 turns avoid BYTE           # one bit into the group (16 turns, 20 when it completes one)
+check GROUP -> GROUP <= 116 turns avoid ENDP      # one group of 7 bits, across byte boundaries

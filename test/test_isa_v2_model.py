@@ -109,7 +109,7 @@ ENCODINGS = [
     # X with an immediate 1001 oooo iiii iiii
     ("XADD 0x12", 0x9112), ("XCMP 0x12", 0x9212),
     # wide pin access 1011 ffff ---- ----
-    ("INH", 0xB100), ("OUTA", 0xB200), ("ODRVA", 0xB300),
+    ("INH", 0xB100), ("OUTA", 0xB200), ("ODRVA", 0xB300), ("PPA", 0xB400),
     # data memory and computed jumps
     ("LDM 5", 0xFC05), ("LDMX 5", 0xFC45), ("STM 5", 0xFC85), ("STMX 5", 0xFCC5),
     ("LDM 15", 0xFC0F), ("STMX 15", 0xFCCF), ("JMPA", 0xFD00), ("CALLA", 0xFD01),
@@ -479,7 +479,7 @@ def test_undefined_branch_condition_never_branches(word):
     assert (m.a[0], m.x[0], m.pins_out) == (0x55, 0x66, 0x77)
 
 
-@pytest.mark.parametrize("word", [0x6900, 0x69FF, 0x6F12, 0x9300, 0x9377, 0x9F01, 0xB400, 0xB5FF, 0xBF00,
+@pytest.mark.parametrize("word", [0x6900, 0x69FF, 0x6F12, 0x9300, 0x9377, 0x9F01, 0xB500, 0xB5FF, 0xBF00,
                                   0xFE00, 0xFE12, 0xFF00, 0xFFFF])
 def test_undefined_subopcodes_are_nop(word):
     m = run("LDA 0x55\nLDX 0x66\nLDA 0\nSUB 1\nNOP\nOUT 0x77\nHALT", raw={4: word})
@@ -624,6 +624,23 @@ def test_outa_replaces_all_pins_and_odrva_replaces_all_pulls():
     m = run("OUT 0xFF\nLDA 0x3C\nOUTA\nODRV 0 0\nODRV 7 0\nLDA 0xFF\nODRVA\nHALT")
     assert m.pins_out == 0x3C
     assert m.od_pull == 0x00
+
+
+def test_ppa_push_pull_mode():
+    """PPA: a pad in push-pull mode is always driven, high unless pulled low; pads 4 and 5 (the loader's) never
+    switch; PPA 0 gives the pads back to open drain without changing what ODRV left pulled."""
+    m = run("HALT")
+    assert (m.od_pp, m.uio_oe, m.uio_out) == (0, 0, 0)                 # reset: open drain, released
+    m = run("LDA 0xFF\nPPA\nHALT")
+    assert m.od_pp == 0xCF and m.uio_oe == 0xCF and m.uio_out == 0xCF  # driven high, except pads 4, 5
+    m = run("LDA 0x03\nPPA\nODRV 0 0\nHALT")
+    assert m.uio_oe == 0x03 and m.uio_out == 0x02                      # pad 0 driven low, pad 1 driven high
+    m = run("LDA 0x03\nPPA\nLDA 0xFE\nODRVA\nHALT")
+    assert m.uio_oe == 0x03 and m.uio_out == 0x02                      # ODRVA sets the levels of both at once
+    m = run("LDA 0x03\nPPA\nODRV 0 0\nLDA 0\nPPA\nHALT")
+    assert m.od_pp == 0 and m.uio_oe == 0x01 and m.uio_out == 0        # back to open drain: pad 0 still pulled
+    m = run("LDA 0x01\nPPA\nLDA 0\nSUB 1\nODRVC 0\nHALT")              # C = 1 (borrow): ODRVC drives pad 0 high
+    assert m.uio_oe == 0x01 and m.uio_out == 0x01
 
 
 def test_pin_reset_value_and_outc_odrvc_unchanged():
@@ -772,9 +789,9 @@ def test_two_threads_count_independently_on_a_fast_schedule():
 # ----------------------------------------------------------------------------------------------
 
 def test_state_vector_layout():
-    assert len(STATE_NAMES) == 4 * 7 + 4 + 64
-    assert STATE_NAMES[28:32] == ("pins_out", "od_pull", "mb", "mb_full")
-    assert STATE_NAMES[32] == "mem0_0" and STATE_NAMES[32 + 16 + 5] == "mem1_5" and STATE_NAMES[-1] == "mem3_15"
+    assert len(STATE_NAMES) == 4 * 7 + 5 + 64
+    assert STATE_NAMES[28:33] == ("pins_out", "uio_oe", "uio_out", "mb", "mb_full")
+    assert STATE_NAMES[33] == "mem0_0" and STATE_NAMES[33 + 16 + 5] == "mem1_5" and STATE_NAMES[-1] == "mem3_15"
     m = run("LDA 0x31\nSTM 5\nSPAWN 2, 4\nHALT\nLDA 0x42\nSTM 9\nHALT")
     st = dict(zip(STATE_NAMES, m.state()))
     assert st["mem0_5"] == 0x31 and st["mem2_9"] == 0x42 and st["mem1_5"] == 0 and st["mem3_9"] == 0

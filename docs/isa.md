@@ -48,8 +48,10 @@ Shared by all threads:
 - **Output pins** `uo[7:0]` (push-pull), reset value `0x01` (so a UART TX line idles high).
   `PIN`, `OUTC` change one bit and `OUT`, `OUTA` replace all eight. Only one instruction runs per clock, so
   two threads never race on the pins. Note that `OUT` overwrites bits another thread may be driving.
-- **Open-drain pins** `0-7` = `uio[7:0]`. They are never driven high: `ODRV`, `ODRVC` and `ODRVA` pull a line low
-  or release it and the external pull-up does the rest. The pad can always be read back as input pins `8-15`, so
+- **Open-drain pins** `0-7` = `uio[7:0]`. After reset they are never driven high: `ODRV`, `ODRVC` and `ODRVA` pull a
+  line low or release it and the external pull-up does the rest. `PPA` can switch any of them except 4 and 5 (the
+  loader's) to push-pull: then the pad is driven high instead of released, so a protocol can drive both levels on a
+  line it shares with the other side and give the line back with `PPA` again (low-speed USB, `docs/usb-low-speed.md`). The pad can always be read back as input pins `8-15`, so
   a slave holding a line low (I2C clock stretching) is visible to the firmware.
 - **Input pins**: `0-7` = `ui[7:0]`, `8-15` = `uio[7:0]`, through a 2-flop synchroniser.
 - **The channel**: a one-byte mailbox with blocking `SEND` / `RECV`.
@@ -177,7 +179,8 @@ Version 1 had only `SHR` here (and ignored `ffff`).
 | 1 | `INH` | `A = IN[15:8]` (the `uio` pads read back) |
 | 2 | `OUTA` | `OUT = A` (all eight push-pull outputs) |
 | 3 | `ODRVA` | open-drain pad `i` is pulled low if `A[i] == 0` and released if `A[i] == 1`, for all eight pads |
-| 4..15 | (undefined) | `NOP` |
+| 4 | `PPA` | push-pull mode of the `uio` pads = `A & 0xCF`: a pad with its bit set is **driven**, low if `ODRV` / `ODRVC` / `ODRVA` pulled it and high if they released it; bit 0 returns it to open drain. Pads 4 and 5 (the loader's `STROBE` and `LOAD`) can never be driven. Reset: `0x00`, all open drain |
+| 5..15 | (undefined) | `NOP` |
 
 ### Shifts
 

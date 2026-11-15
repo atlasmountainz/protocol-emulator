@@ -438,7 +438,7 @@ ODRVA_SRC = """
 ODRVA_OE_SEQ = [0x00, 0x59, 0x0F, 0xFF, 0xF7, 0xD7, 0x00]      # first sample (reset value), then each change
 
 # undefined sub-opcodes are NOPs: none of these words may change A or X or jump anywhere
-UNDEFINED_WORDS = [0x4900, 0x4A05, 0x4F00, 0x6900, 0x6FFF, 0x9300, 0x9F55, 0xB400, 0xBF12, 0xFE00, 0xFFFF]
+UNDEFINED_WORDS = [0x4900, 0x4A05, 0x4F00, 0x6900, 0x6FFF, 0x9300, 0x9F55, 0xB500, 0xBF12, 0xFE00, 0xFFFF]
 UNDEF_SRC = ("LDA 0x55\nLDX 0x66\n" + "NOP\n" * len(UNDEFINED_WORDS) + RES + "\nTXA\n" + RES + "\nOUT 0x77\nHALT")
 UNDEF_RAW = {2 + i: w for i, w in enumerate(UNDEFINED_WORDS)}
 
@@ -662,6 +662,45 @@ async def test_computed_jumps_and_lookup_table(dut):
 async def test_wide_pin_access(dut):
     """IN, INH (the uio pads read back), OUTA, ODRVA."""
     await run_group(dut, "wide")
+
+
+PPA_SRC = """
+        LDA  0x0F
+        PPA                   ; pads 0-3 push-pull: driven high (nothing pulled)
+        WAIT 20
+        ODRV 1 0              ; pad 1 driven low
+        WAIT 20
+        LDA  0xF5
+        ODRVA                 ; pads 1, 3 low; 0, 2 high (4-7 released / open drain)
+        WAIT 20
+        LDA  0xFF
+        PPA                   ; all but the loader's pads 4, 5
+        WAIT 20
+        LDA  0x00
+        PPA                   ; open drain again: pads 1, 3 stay pulled low, the rest released
+        WAIT 20
+        LDA  0xFF
+        ODRVA
+        HALT
+"""
+# (uio_oe, uio_out) after each step, in order
+PPA_SEQ = [(0x00, 0x00), (0x0F, 0x0F), (0x0F, 0x0D), (0x0F, 0x05), (0xCF, 0xC5), (0x0A, 0x00), (0x00, 0x00)]
+
+
+@cocotb.test()
+async def test_ppa_push_pull_pads(dut):
+    """PPA: a pad in push-pull mode is driven high unless pulled low; ODRV / ODRVA set its level; the loader's
+    pads 4 and 5 never switch; PPA 0 returns the pads to open drain."""
+    await boot(dut)
+    await start_prog(dut, assemble(PPA_SRC))
+    seen = []
+    for _ in range(4 * 160):
+        await RisingEdge(dut.clk)
+        v = (int(dut.uio_oe.value), int(dut.uio_out.value))
+        if not seen or seen[-1] != v:
+            seen.append(v)
+        assert v[1] & ~v[0] == 0, "uio_out high on a pad that is not driven"
+    assert seen == PPA_SEQ, [(hex(a), hex(b)) for a, b in seen]
 
 
 @cocotb.test()

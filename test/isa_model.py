@@ -64,6 +64,7 @@ class Model:
         self.mb_full = 0
         self.pins_out = OUT_RESET
         self.od_pull = 0
+        self.od_pp = 0
         self.sync1 = self.sync2 = 0
         self.cycle = 0
         self.fetched_running = 0       # was the thread fetched at the previous edge running?
@@ -257,6 +258,9 @@ class Model:
             elif ext == 3:
                 self.od_pull = (~a) & 0xFF     # a 0 bit pulls the pad low, a 1 bit releases it
                 self.hit("ODRVA")
+            elif ext == 4:
+                self.od_pp = a & 0xCF          # push-pull mode; never the loader's pads 4, 5
+                self.hit("PPA")
             else:
                 self.hit("WIDE_undefined")     # NOP
         elif op == 0xC:
@@ -346,13 +350,23 @@ class Model:
             self.pc[s], self.a[s], self.x[s], self.c[s] = addr, 0, 0, 0
             self.wait[s], self.sp[s], self.act[s] = 0, 0, 1
 
+    @property
+    def uio_oe(self):
+        """The uio pads' output enables: pulled low, or driven in push-pull mode."""
+        return (self.od_pull | self.od_pp) & 0xFF
+
+    @property
+    def uio_out(self):
+        """The uio pads' output values: high only for a push-pull pad that is not pulled low."""
+        return self.od_pp & ~self.od_pull & 0xFF
+
     def state(self):
         """Everything the RTL exposes, in the order of STATE_NAMES."""
         out = []
         for t in range(4):
             out += [self.pc[t], self.a[t], self.x[t], self.c[t], self.wait[t], self.act[t],
                     self.sp[t]]
-        out += [self.pins_out, self.od_pull, self.mb, self.mb_full]
+        out += [self.pins_out, self.uio_oe, self.uio_out, self.mb, self.mb_full]
         for t in range(4):
             out += self.mem[t]
         return tuple(out)
@@ -360,7 +374,7 @@ class Model:
 
 STATE_NAMES = tuple(f"{n}{t}" for t in range(4)
                     for n in ("pc", "a", "x", "c", "wait", "act", "sp")) + (
-    "pins_out", "od_pull", "mb", "mb_full") + tuple(f"mem{t}_{i}" for t in range(4) for i in range(16))
+    "pins_out", "uio_oe", "uio_out", "mb", "mb_full") + tuple(f"mem{t}_{i}" for t in range(4) for i in range(16))
 
 
 def _undefined_word(r, kind):
@@ -372,7 +386,7 @@ def _undefined_word(r, kind):
     if kind == 2:
         return 0x9000 | (r.randrange(3, 16) << 8) | r.randrange(256)    # X op 3..15
     if kind == 3:
-        return 0xB000 | (r.randrange(4, 16) << 8) | r.randrange(256)    # wide pin op 4..15
+        return 0xB000 | (r.randrange(5, 16) << 8) | r.randrange(256)    # wide pin op 5..15
     return 0xF000 | (r.randrange(0xE, 0x10) << 8) | r.randrange(256)    # extended sub-opcode 0xE, 0xF
 
 
@@ -411,7 +425,7 @@ def _idioms():
         lambda b: ["LDA 165", "STM 3", "LDA 0", "LDM 3", "LDX 15", "LDA 90", "STMX 3", "LDMX 3",
                    "LDX 14", "LDMX 5", "LDA 9", "STMX 2", "LDX 0", "LDMX 15", "LDM 2", "LDM 15"],
         lambda b: ["LDA 240", "OUTA", "ODRVA", "INH", "IN", "TAX", "ANDX", "ORX", "XORX", "TXA",
-                   "LDA 255", "ODRVA"],
+                   "LDA 255", "ODRVA", "PPA", "LDA 0x5A", "ODRVA", "LDA 0", "PPA"],
         # DJNZ: loop three times, then exit; and exit on the first pass
         lambda b: ["LDX 3", "NOP", f"DJNZ {b + 1}", "LDX 1", f"DJNZ {b}"],
         # CALLA into a RETL table, then JMPA over the table
@@ -485,7 +499,7 @@ def gen_program(seed):
            ("ROR", "ROL", "INC", "DEC", "NOT", "CMPX", "SWAP", "TAX", "TXA", "XCHG", "ADDX",
             "SUBX", "ANDX", "ORX", "XORX")]
     v2 += [(m, 2, (lambda m=m: f"{m} {imm()}")) for m in ("XADD", "XCMP")]
-    v2 += [(m, 2, (lambda m=m: m)) for m in ("INH", "OUTA", "ODRVA")]
+    v2 += [(m, 2, (lambda m=m: m)) for m in ("INH", "OUTA", "ODRVA", "PPA")]
     v2 += [(m, 3, (lambda m=m: f"{m} {r.randrange(16)}")) for m in ("LDM", "STM", "LDMX", "STMX")]
     v2 += [("JMPA", 1, lambda: "JMPA"), ("CALLA", 1, lambda: "CALLA"),
            ("RETL", 2, lambda: f"RETL {imm()}"),

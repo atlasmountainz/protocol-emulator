@@ -106,7 +106,7 @@ async def test_random_program(dut):
                     (int(cpu.wait_q.value) >> (12 * th)) & 0xFFF,
                     (int(cpu.act_q.value) >> th) & 1,
                     (int(cpu.sp_q.value) >> (2 * th)) & 3]
-        got += [int(dut.uo_out.value), int(dut.uio_oe.value), int(cpu.mb.value),
+        got += [int(dut.uo_out.value), int(dut.uio_oe.value), int(dut.uio_out.value), int(cpu.mb.value),
                 int(cpu.mb_full.value)]
         dmem = int(cpu.dmem_q.value)
         got += [(dmem >> (8 * (16 * th + i))) & 0xFF for th in range(4) for i in range(16)]

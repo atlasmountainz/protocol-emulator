@@ -45,6 +45,7 @@ module tt_um_atlasmountainz_protocol_emulator (
   wire [15:0] rom_data;
   wire [15:0] ram_data;
   wire [7:0]  od_pull;
+  wire [7:0]  od_pp;
 
   // ---- Program loader --------------------------------------------------------------------
   wire       load_en = sync2[13];   // uio[5]
@@ -111,6 +112,7 @@ module tt_um_atlasmountainz_protocol_emulator (
       .pins_in (sync2),
       .pins_out(uo_out),
       .od_pull (od_pull),
+      .od_pp   (od_pp),
       .rom_addr(rom_addr),
       .rom_addr_rep(rom_addr_rep),
       .rom_data(instr)
@@ -121,11 +123,13 @@ module tt_um_atlasmountainz_protocol_emulator (
       .data(rom_data)
   );
 
-  // Open-drain bidirectional pins (uio): the output value is always 0, and the output
-  // enable pulls the line low. Released pins float high via the external pull-up and can
-  // still be read as inputs.
-  assign uio_out = 8'b0;
-  assign uio_oe  = od_pull;
+  // Bidirectional pins (uio). By default open drain: the output value is 0 and the output enable
+  // pulls the line low; released pins float high via the external pull-up and can still be read
+  // as inputs. A pad in push-pull mode (PPA sets od_pp; never pads 4 and 5, the loader's) is
+  // always driven: low if od_pull, high otherwise. PPA 0 returns a pad to open drain (released
+  // or pulled as before), which is how a bus is handed back to the other side.
+  assign uio_out = od_pp & ~od_pull;
+  assign uio_oe  = od_pull | od_pp;
 
   // List all unused inputs to prevent warnings
   wire _unused = &{ena, 1'b0};

@@ -33,12 +33,13 @@ Spec file (one statement per line, '#' starts a comment):
                                       reaches that instruction (keeps the analysis small when a program computes
                                       with data that timing does not depend on, such as a CRC; always sound,
                                       because unknown covers every value)
-    event NAME = out P | out P=V | pull P | release P | od P | at LABEL[+N]   (alternatives: a | b)
+    event NAME = out P | out P=V | pull P | release P | od P | pp P[=V] | at LABEL[+N]   (alternatives: a | b)
     check A -> B [avoid E] == 8.64us | >= 4.7us | <= 50ns | in [3.9us, 5us] | in [200ns, 500ns] [550ns, 850ns]
     report A -> B                     print the range without a verdict
 
 Events: `out P` is any instruction that writes push-pull output P (PIN, OUT, OUTC, OUTA); `out P=V` only
-when it writes the value V; `pull P` / `release P` / `od P` the same for open-drain pad P; `at L` is the
+when it writes the value V; `pull P` / `release P` / `od P` the same for open-drain pad P
+(in push-pull mode: drive low / drive high); `pp P=1` / `pp P=0` a pad switching to push-pull / open drain (PPA); `at L` is the
 execution of the instruction at address / label L. The time from event A to B is measured from an
 execution of A to the *next* execution of B (A may equal B: consecutive occurrences).
 Units: clk, turn, ns, us, ms.
@@ -218,6 +219,8 @@ def successors(st, w, thread, nonblocking):
             return [(nxt(), 1, tuple(("out", p, bit(a, p)) for p in range(8)))]
         if ext == 3:
             return [(nxt(), 1, tuple(("od", p, bit(a, p)) for p in range(8)))]
+        if ext == 4:                                        # PPA: push-pull mode of the pads
+            return [(nxt(), 1, tuple(("pp", p, None if p in (4, 5) else bit(a, p)) for p in range(8)))]
         return [(nxt(), 1, ())]
     if op == 0xC:                                           # SHL
         if ext == 0:
@@ -618,7 +621,7 @@ class Spec:
         """An event is one or more alternatives separated by '|'."""
         alts = []
         for part in text.split("|"):
-            m = re.match(r"\s*(out|od|pull|release|at)\s+(\S+?)(?:=([01]))?\s*$", part)
+            m = re.match(r"\s*(out|od|pp|pull|release|at)\s+(\S+?)(?:=([01]))?\s*$", part)
             if not m:
                 self.err(n, f"bad event '{part.strip()}'")
             kind, arg, val = m.groups()

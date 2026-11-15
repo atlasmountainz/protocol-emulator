@@ -78,6 +78,7 @@ OPS = {
     "INH":  (0xB, []),                      # A = input pins [15:8]
     "OUTA": (0xB, []),                      # output pins = A
     "ODRVA": (0xB, []),                     # open-drain pads = A (0 pulls low, 1 releases)
+    "PPA":   (0xB, []),                     # push-pull mode of the uio pads = A (pads 4, 5 never)
     # data memory and computed jumps (extended family)
     "LDM":  (0xF, ["off"]),                 # A = MEM[off]
     "STM":  (0xF, ["off"]),                 # MEM[off] = A
@@ -94,7 +95,7 @@ ACC_IMM = {"LDA": 0, "ADD": 1, "SUB": 2, "AND": 3, "OR": 4, "XOR": 5, "CMP": 6, 
 ACC_X = {"SHR": 0, "ROR": 1, "ROL": 2, "INC": 3, "DEC": 4, "NOT": 5, "CMPX": 6, "SWAP": 7,
          "TAX": 8, "TXA": 9, "XCHG": 10, "ADDX": 11, "SUBX": 12, "ANDX": 13, "ORX": 14, "XORX": 15}
 X_IMM = {"LDX": 0, "XADD": 1, "XCMP": 2}
-WIDE_PIN = {"IN": 0, "INH": 1, "OUTA": 2, "ODRVA": 3}
+WIDE_PIN = {"IN": 0, "INH": 1, "OUTA": 2, "ODRVA": 3, "PPA": 4}
 # data memory: extended sub-opcode 0xC, bit 7 = store, bit 6 = X-indexed, bits 3:0 = offset
 MEM_OPS = {"LDM": 0x00, "LDMX": 0x40, "STM": 0x80, "STMX": 0xC0}
 
@@ -127,7 +128,7 @@ def encode(mn, args, labels, lineno):
     elif mn in ("XADD", "XCMP"):
         rng("imm8", 255)
         w |= (X_IMM[mn] << 8) | v["imm8"]
-    elif mn in ("INH", "OUTA", "ODRVA"):
+    elif mn in ("INH", "OUTA", "ODRVA", "PPA"):
         w |= WIDE_PIN[mn] << 8
     elif mn in MEM_OPS:
         rng("off", 15)

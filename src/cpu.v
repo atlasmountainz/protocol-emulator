@@ -28,6 +28,8 @@ module cpu #(
     input  wire [15:0] pins_in,    // synchronised input pins
     output reg  [7:0]  pins_out,   // push-pull output pins
     output reg  [7:0]  od_pull,    // open-drain pins: 1 = pull the line low, 0 = released
+    output reg  [7:0]  od_pp,      // push-pull mode of the uio pads (PPA): 1 = the pad is driven,
+                                   // low if od_pull else high; 0 = open drain (reset). Pads 4, 5 never.
     output wire [7:0]  rom_addr,   // fetch address
     output wire [127:0] rom_addr_rep, // 16 copies of rom_addr, one per instruction bit
     input  wire [15:0] rom_data    // instruction at rom_addr
@@ -127,7 +129,7 @@ module cpu #(
   reg [7:0]  npc;                  // next PC of the executing thread
   reg [7:0]  a_n, x_n;
   reg        c_n;
-  reg [7:0]  pins_n, od_n;
+  reg [7:0]  pins_n, od_n, pp_n;
   reg [11:0] wait_n;
   reg        halt_r, push_r, pop_r, mem_w, mb_wr, mb_rd;
   reg [7:0]  stk_d;                // value pushed on the return stack
@@ -139,6 +141,7 @@ module cpu #(
     c_n    = c_e;
     pins_n = pins_out;
     od_n   = od_pull;
+    pp_n   = od_pp;
     wait_n = wait_e;
     halt_r = 1'b0;
     push_r = 1'b0;
@@ -216,6 +219,7 @@ module cpu #(
           4'd1: a_n = pins_in[15:8];                         // INH
           4'd2: pins_n = a_e;                                // OUTA
           4'd3: od_n = ~a_e;                                 // ODRVA
+          4'd4: pp_n = a_e & 8'hCF;                          // PPA (never the loader's pads 4, 5)
           default: ;
         endcase
       end
@@ -311,6 +315,7 @@ module cpu #(
       mb_full  <= 1'b0;
       pins_out <= OUT_RESET;
       od_pull  <= 8'd0;
+      od_pp    <= 8'd0;
       slot     <= 2'd0;
       fa       <= 8'd0;
       ir       <= 16'd0;
@@ -335,6 +340,7 @@ module cpu #(
           c_q[e]           <= c_n;
           pins_out         <= pins_n;
           od_pull          <= od_n;
+          od_pp            <= pp_n;
           wait_q[12*e +: 12] <= wait_n;
           if (halt_r) act_q[e] <= 1'b0;
           if (push_r) begin

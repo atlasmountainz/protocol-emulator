@@ -44,7 +44,7 @@ module pipeline (
   wire [1:0]  slot, ethr;
   wire        ev, mbf;
 
-  cpu dut (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po), .od_pull(od),
+  cpu dut (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po), .od_pull(od), .od_pp(),
            .rom_addr(rom_addr), .rom_addr_rep(), .rom_data(rom_data),
            .f_pc(pc), .f_a(a), .f_x(x), .f_c(c), .f_act(act), .f_wait(wt), .f_sp(sp),
            .f_fa(fa), .f_stack(stack), .f_mem(mem), .f_ir(ir), .f_slot(slot), .f_ethr(ethr),

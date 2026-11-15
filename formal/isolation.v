@@ -61,12 +61,12 @@ module isolation #(
   wire [1:0]  slot_a, ethr_a, slot_b, ethr_b;
   wire        ev_a, ev_b, mbf_a, mbf_b;
 
-  cpu cpu_a (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po_a), .od_pull(od_a),
+  cpu cpu_a (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po_a), .od_pull(od_a), .od_pp(),
              .rom_addr(rom_addr_a), .rom_addr_rep(), .rom_data(rom_data_a),
              .f_pc(pc_a), .f_a(a_a), .f_x(x_a), .f_c(c_a), .f_act(act_a), .f_wait(wait_a),
              .f_sp(sp_a), .f_fa(fa_a), .f_stack(stack_a), .f_mem(mem_a), .f_ir(ir_a), .f_slot(slot_a),
              .f_ethr(ethr_a), .f_evalid(ev_a), .f_mb_full(mbf_a));
-  cpu cpu_b (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po_b), .od_pull(od_b),
+  cpu cpu_b (.clk(clk), .rst_n(rst_n), .sched(sched), .pins_in(pins_in), .pins_out(po_b), .od_pull(od_b), .od_pp(),
              .rom_addr(rom_addr_b), .rom_addr_rep(), .rom_data(rom_data_b),
              .f_pc(pc_b), .f_a(a_b), .f_x(x_b), .f_c(c_b), .f_act(act_b), .f_wait(wait_b),
              .f_sp(sp_b), .f_fa(fa_b), .f_stack(stack_b), .f_mem(mem_b), .f_ir(ir_b), .f_slot(slot_b),

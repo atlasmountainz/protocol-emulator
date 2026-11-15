@@ -1,13 +1,97 @@
-# Low-speed USB (1.5 Mbit/s) receiver
+# Low-speed USB (1.5 Mbit/s): a host and a receiver
 
-`firmware/examples/usb_ls_rx.asm` receives and checks low-speed USB packets: SYNC, NRZI, bit unstuffing, the PID check,
-CRC5 on tokens, CRC16 on data packets. It is firmware for the loadable program memory (246 of 256 words); the silicon
-is the one that was built for UART, SPI and I2C, and nothing in the hardware knows about USB.
+Two firmware programs for the loadable program memory; nothing in the hardware knows about USB.
 
-It is a **receiver**: it listens to what a host sends (or to a bus it only monitors) and reports it. It does not
-transmit. The reason is the pads, not the instruction set: only `uo[7:0]` are push-pull, `uio` are open-drain
-(they can only pull low), and a bus that is driven by both ends needs a driver that can let go of the lines.
-A transmitter would be one more firmware program behind an external transceiver; none is written here.
+- `firmware/examples/usb_ls_host.asm` (217 words) is a **host**: it resets the bus, sends keep-alives, sends the first
+  transaction of every enumeration (SETUP + DATA0 with GET_DESCRIPTOR(device) to address 0), turns the bus around and
+  receives the device's handshake. It drives D+ and D- itself, so it needs the pads' push-pull mode (`PPA`,
+  `docs/isa.md`). See [the host](#the-host) below.
+- `firmware/examples/usb_ls_rx.asm` (246 words) is a **receiver**: it receives and checks any low-speed packet (SYNC,
+  NRZI, bit unstuffing, PID check, CRC5 on tokens, CRC16 on data packets) and reports it. It only listens.
+
+## The host
+
+```
+python3 tools/load_image.py --sched 0,1,0,1 build/usb_ls_host firmware/examples/usb_ls_host.asm
+```
+
+| Pin | Meaning |
+|---|---|
+| `uio[0]` | D+ (driven while the host sends, released while the device answers; read back as input 8) |
+| `uio[1]` | D- (the same; input 9) |
+| `uo[7:0]` | the result of the last transaction: the device's handshake PID (`D2` ACK, `5A` NAK, `1E` STALL), `00` if no device answered within 17 bit times, `FF` if the answer did not start with a SYNC |
+
+The board needs what a host port has: 15 kΩ pull-downs on D+ and D- (the device brings its own 1.5 kΩ pull-up on
+D-), and, for a real cable, the series resistors and 3.3 V signalling of a USB port.
+
+What it sends: SE0 for 10.5 ms (bus reset), then once per millisecond a keep-alive (an EOP on its own), then
+`2D 00 10` (SETUP, address 0, endpoint 0) and `C3 80 06 00 01 00 00 40 00 DD 94` (DATA0 with the 8-byte request),
+then it listens for the handshake. Address 0, endpoint 0 is the only address a device answers before it has been
+given one, so this is the request every host sends first. The two packets are constants in the program; their
+CRCs were taken from the reference model (`test/usb_ls.py`), which checks them against the catalogue values.
+
+### How it sends
+
+**The pads.** `PPA 0x03` puts D+ and D- in push-pull mode; `ODRVA` then writes both lines in one instruction:
+`0xFE` = J, `0xFD` = K, `0xFC` = SE0, so there is never a moment with one line changed and the other not. To let go,
+`PPA 0` returns the pads to open drain (D+ is still pulled low, D- is held high by the device's pull-up: still J)
+and `ODRVA 0xFF` releases D+, which stays low on the host's pull-down. No glitch, no SE1.
+
+**Two threads.** Thread 1 is the encoder: it does the bit stuffing and passes the bits to thread 0 through the
+mailbox, 7 at a time, as a byte with a 1 above the bits (so thread 0 sees when a group is used up without a counter).
+`0x00` ends a packet. Thread 0 is the line driver: NRZI (a 0 toggles J and K) and one `ODRVA` per bit cell.
+
+**Exact cells.** A bit is 16.67 turns of 40 ns. The cells are 17, 17 and 16 turns (680, 680, 640 ns), so three bits
+are exactly 2 µs and the average rate is exactly 1.5 Mbit/s, without drift, however long the packet. Each cell is one
+call of the same routine, and the level is written 13 turns after the call on every path: a 0 or a 1, a new group
+from the mailbox or not. The end of the packet comes out of the same path, so the SE0 also starts on the grid.
+
+### What is proved about its timing
+
+`firmware/timing/usb_ls_host.timing` (thread 0, 282,344 abstract states) and `usb_ls_host_enc.timing` (thread 1):
+
+| | Proved |
+|---|---|
+| one group of three cells | exactly 50 turns (2 µs) |
+| a level written | exactly 13 turns into the group, then 17, 17, 16 turns apart, on every path |
+| the last cell to the SE0 of the EOP | 16 or 17 turns, like any other cell |
+| EOP | SE0 for exactly 1.32 µs (USB: 1.25 to 1.5 µs), then J for exactly 17 turns, then the lines are let go |
+| handshake samples | 16 or 17 turns apart (16.67 on average) |
+| the encoder | makes a group of 7 bits in at most 4.52 µs, faster than the driver uses one (4.67 µs) |
+
+The mailbox holds one group and the encoder works on the next, so the driver never waits; the tests check this on
+every edge of every packet. `test/test_timing_rtl.py` (`test_usb_ls_host_thread0_loaded`) runs the host on the RTL
+against the device model: all 702 intervals are inside the proved ranges and every range is hit exactly.
+
+### Jitter, against the USB specification
+
+Every transition is between 0 and 26.7 ns after its place on the ideal 666.67 ns grid, and the bit rate is exact
+on average (USB asks a host for 1.5 Mbit/s ± 0.05 %). The USB 2.0 limits for a host's low-speed source jitter are
+±25 ns to the next transition and ±14 ns for a pair of transitions; the cells measured here are +13.3, +13.3 and
+−26.7 ns from the ideal one, so the host is **outside those two limits by 1.7 ns and 12.7 ns**. That comes from the
+40 ns instruction step: no single thread can do better. A device's own limits (±95 / ±150 ns) and the receive
+tolerances of devices are much wider, so a device should not notice, but this is a deviation from the specification
+and is stated as one. Placing the edges on 20 ns steps would need the two threads to take turns writing the cells.
+
+### How the host is tested
+
+| What | Where |
+|---|---|
+| on the instruction-set model against the device model (`test/usb_host_bus.py`): the packets decoded with the reference model, the bus reset, keep-alives, EOPs, the gap between token and data, the release of the lines, every transition against the grid, ACK / NAK / STALL / no answer / a garbled answer, the device answering 2 to 6.5 bit times later at -1.5 %, 0 and +1.5 %, other requests and addresses (all 1s: a stuffed bit after every six), 8 mutants of the firmware | `test/test_usb_ls_host_model.py` (35 tests) |
+| the same on the chip's RTL, and on the gate-level netlist in CI | `test/test_usb_ls_host_rtl.py` (2 tests, pins only) |
+| the analyzer's ranges against the RTL | `test/test_timing_rtl.py` (`test_usb_ls_host_thread0_loaded`) |
+
+### Limits of the host
+
+- One fixed transaction: it does not go on to read the descriptor (an IN token and a DATA1 packet back), give the
+  device an address or configure it. Receiving a data packet needs the receiver below, and the two do not fit in
+  256 words together.
+- The packets are constants; the CRCs are not computed on the chip (the receiver computes both kinds).
+- It does not check the device's EOP, the handshake's PID check bits or the bus state before it sends.
+- The jitter deviation above.
+- The device is this repository's model. It was not tried with a real USB device, and no silicon has run it.
+
+# The receiver
 
 ## What it does
 
@@ -123,11 +207,11 @@ against the model in this repository, not measurements on a USB host.
 
 ## Limits
 
-- Receive only (above). No SOF-based timing, no enumeration, no response to the host.
+- Receive only. No SOF-based timing, no enumeration, no response to the host (for sending, see the host above).
 - The bus model is this repository's own. It was checked against published CRC values and known packets, not against a
   USB host, a cable or an analyser, and no silicon has run this program.
 - Electrical USB is not addressed: D+ and D- are taken as logic inputs on `ui[1:0]` and a proper receiver needs the
   external front end (level, the series resistors, the pull-up on the device side) the pads do not provide.
 - SE0 is looked at once per bit, about 5 turns after the boundary, so a glitch shorter than that is not an end of packet.
 - Bit-time tolerance is asymmetric (−2.0 % to +5.0 %) because the window steps 17 turns while the bit is 16.67.
-- The 246 words leave no room for a transmitter in the same image.
+- The 246 words leave no room for the host's transmitter in the same image.
