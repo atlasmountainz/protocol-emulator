@@ -6,7 +6,7 @@ Run with:  cd test && make COCOTB_TEST_MODULES=test_multi
 One program image runs a WS2812 LED strip driver (threads 0 and 1, uo[2]), an I2C target with 16 registers
 (thread 2, SDA uio[0], SCL uio[1]) and a UART status line (thread 3, uo[0]) together. The test drives the chip
 through its pins only, with all three checked at once:
-  * the I2C master of test_i2c_target_regs.py runs random register writes and reads against a reference model,
+  * the I2C master of i2c_target_bus.py (as in test_i2c_target_regs.py) runs random register writes and reads against a reference model,
     with its bus checks (the chip drives only SDA, never changes it while SCL is high, answers in time);
   * the WS2812 waveform is decoded and must be exactly what the stand-alone program produces: the same pixels
     and the same pulse widths to the clock (16 / 36 clocks high, 64 clocks per bit), however busy the I2C bus is;
@@ -23,7 +23,7 @@ from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge
 
 from loader import RAM_WORDS, load_program
-import test_i2c_target_regs as itr
+import i2c_target_bus as itr
 import test_leds_keyboard_midi as lkm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
@@ -53,7 +53,9 @@ async def record(dut, edges, stray):
 
 
 async def boot(dut, timing):
-    itr.start_clock(dut)
+    task = getattr(dut, "_clk_task", None)             # one clock for the whole module, however often we boot
+    if task is None or task.done():
+        dut._clk_task = cocotb.start_soon(Clock(dut.clk, 20, unit="ns").start())
     dut.ena.value = 1
     dut.ui_in.value = 0
     dut.uio_in.value = 0
