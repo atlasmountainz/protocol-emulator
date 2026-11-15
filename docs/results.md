@@ -1,20 +1,26 @@
 # Hardware build results
 
 From the LibreLane build in CI (`gds` workflow) of the full four-thread design with instruction set version 2: CPU
-with ALU, 16 bytes of data memory per thread and a loadable thread schedule, 256-word ROM with the built-in firmware,
+with ALU, 16 bytes of data memory per thread, a loadable thread schedule and the push-pull mode of the `uio` pads (`PPA`), 256-word ROM with the built-in firmware,
 256-word loadable program memory and loader. IHP 130 nm CMOS5L, 8x4 tiles (the size confirmed for the March 2027
 shuttle), 20 ns clock (50 MHz).
 
 | | |
 |---|---|
-| Standard cells (excluding fill and antenna diodes) | 35,599 |
-| of which flip-flops | 5,146 (about 4,100 are the loadable program memory, 512 the data memory, and the four threads' other state is about 250) |
-| Standard-cell area (excluding fill) | 597,745 µm² (about 597,030 µm² without the antenna diodes) |
-| Core area (8x4 tiles) | about 1,208,000 µm², so about 49 % used |
+| Standard cells (excluding fill and antenna diodes) | 35,696 |
+| of which flip-flops | 5,152 (about 4,100 are the loadable program memory, 512 the data memory, and the four threads' other state is about 250) |
+| Standard-cell area (excluding fill) | 599,162 µm² (about 598,531 µm² without the antenna diodes) |
+| Core area (8x4 tiles) | about 1,208,000 µm², so about 50 % used |
 | Setup timing at 20 ns | no violations in any corner (nom_slow 1.08 V 125 C, nom_typ, nom_fast) |
 | Hold timing | no violations in any corner |
 | Antenna, LVS, DRC, precheck | pass |
-| Gate-level simulation of the synthesized netlist | the 17-test cocotb suite of the ROM firmware passes (CI `gl_test`) |
+| Gate-level simulation of the synthesized netlist | the default cocotb suite (60 tests: the ROM firmware, the instruction set, the fast SPI master, the USB receiver and host, SWD, CAN and three protocols at once) passes (CI `gl_test`) |
+
+## What the push-pull mode cost
+
+`PPA` added 6 flip-flops (one per `uio` pad that can be switched; pads 4 and 5 never can, so synthesis removed their
+two) and the logic in front of the pads: 97 cells and about 1,400 µm² more than the build before it (35,599 cells,
+597,745 µm²). Timing at 20 ns, antenna, DRC, LVS and the precheck still pass.
 
 ## What instruction set version 2 cost
 
