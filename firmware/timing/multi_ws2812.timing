@@ -1,0 +1,15 @@
+# The three-protocol image (firmware/examples/multi.asm), thread 0: the WS2812 waveform, with the same checks as
+# ws2812.timing. The code is the stand-alone driver's; this spec proves that in this image, where threads 2 and 3
+# run an I2C target and a UART at the same time, the waveform is still exactly the same (a thread's timing depends
+# only on its own instructions: docs/verification.md, the isolation proofs).
+program ../examples/multi.asm
+thread 0
+start ws_next
+nonblocking
+init A=? X=? C=?
+event RISE = at ws_bit
+event FALL = out 2=0
+
+check RISE -> FALL in [250ns, 550ns] [650ns, 950ns]     # T0H or T1H
+check FALL -> RISE in [300ns, 600ns] [700ns, 1000ns]    # T1L or T0L
+check RISE -> RISE == 1.28us                             # every bit the same length, even across a byte boundary
